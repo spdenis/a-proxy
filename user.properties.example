@@ -34,6 +34,9 @@ autosys.webui.login.password-field=password
 #autosys.webui.login.success.cookie=JSESSIONID
 #autosys.webui.login.failure-marker="success":false
 
+# --- Capture mode: record the UI's requests/responses (secrets masked) into ./captures/<run>/
+#autosys.capture.enabled=true
+
 # --- Logging
 #logging.file.name=logs/a-proxy.log
 #autosys.proxy.access-log=true

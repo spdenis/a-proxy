@@ -57,6 +57,13 @@ autosys:
       redirect-to-token-page: true
       landing-page:                 # e.g. /ui/Home.html: page after login; first visit shows /proxy/token
 
+  # Record AutoSys UI traffic (secrets masked) to learn its internal endpoints. Development only.
+  capture:
+    enabled: false
+    dir: captures             # one sub-directory per run, one JSON file per request
+    max-body-bytes: 1048576
+    # exclude-path-pattern: regex of paths not recorded (default: static assets .js .css images fonts)
+
 management:
   endpoints:
     web:

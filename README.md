@@ -111,6 +111,45 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/se
 
 A missing, wrong, expired or revoked token gives `401` with `application/problem+json` (`/problems/token-invalid`).
 
+## Capture mode: record the AutoSys UI's internal requests
+
+The job API has to make the same internal requests the AutoSys UI makes. To find out what those are,
+switch on capture mode and click through the UI once:
+
+```properties
+autosys.capture.enabled=true
+```
+
+Each proxied request is then written to `captures/<yyyyMMdd-HHmmss>/NNNN-<METHOD>-<path>.json`, numbered in
+order. A `[capture] GET /... -> 200 saved 0012-GET-....json` log line marks each one, so a click can be matched
+to its files. Static assets (`.js`, `.css`, images, fonts) are skipped; `autosys.capture.exclude-path-pattern` changes that.
+
+Each file holds the method, path, query parameters, request headers and body, response status, headers and body.
+JSON bodies are stored as JSON, text as text, binary as a size placeholder. Responses are recorded uncompressed, as
+AutoSys sent them, before any rewriting.
+
+**What is masked:** cookie and `Set-Cookie` values, `Authorization`, any header, parameter or JSON field whose name
+looks secret (password, token, CSRF, session id, credential), the configured login password field, CSRF tokens in
+HTML hidden inputs and JavaScript, and API tokens. **What is not masked:** job names, machines, owners, commands
+and everything else. `captures/` is git-ignored; review files before sharing them.
+
+Flows to record, ideally with a **test job** outside production:
+
+| # | In the UI | Learn |
+|---|---|---|
+| 1 | Search jobs (with `*` wildcard; by status if possible) | search endpoint, parameters, paging, result format |
+| 2 | Open a job: details and current status | details endpoint, status codes |
+| 3 | Show dependencies / conditions; a box job with children | dependency format |
+| 4 | Force start the test job | action endpoint, payload, how the CSRF token is sent |
+| 5 | Start (if separate) and kill | same |
+| 6 | Optional: hold/off hold, ice/off ice, run history | same |
+| 7 | Delete the AutoSys session cookie in dev tools (or wait for the timeout), then click something | how an expired session looks |
+| 8 | Log out | logout endpoint |
+
+Also check by hand: log in from two different browsers. Does the first one get logged out?
+
+Switch capture mode off afterwards; it buffers every response in memory.
+
 ## How it works
 
 | Path | Served by |

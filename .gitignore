@@ -8,6 +8,7 @@ out/
 # local run configuration may contain real hostnames
 user.properties
 logs/
+captures/
 *.p12
 *.jks
 *.har

@@ -30,7 +30,22 @@ public record AutosysProperties(
         @Valid @DefaultValue Session session,
         @Valid @DefaultValue Http http,
         @Valid @DefaultValue Token token,
-        @Valid @DefaultValue Webui webui) {
+        @Valid @DefaultValue Webui webui,
+        @Valid @DefaultValue Capture capture) {
+
+    /**
+     * Records proxied AutoSys requests/responses (secrets masked) to files, to learn the
+     * UI's internal endpoints. For development only: captures contain job data.
+     */
+    public record Capture(
+            @DefaultValue("false") boolean enabled,
+            /* Each proxy run writes into its own sub-directory. */
+            @DefaultValue("captures") String dir,
+            /* Bodies longer than this are truncated in the capture file. */
+            @DefaultValue("1048576") int maxBodyBytes,
+            /* Paths matching this regex (static assets) are not recorded. */
+            @DefaultValue("(?i).*\\.(js|css|map|png|jpe?g|gif|svg|ico|woff2?|ttf|eot|otf)$") String excludePathPattern) {
+    }
 
     /** Browser-facing reverse proxy settings. */
     public record Proxy(
