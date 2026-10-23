@@ -61,4 +61,33 @@ class CaptureDumpTest {
         assertThat(tables.get(1).headers()).containsExactly("Name", "Box Name", "Status", "Exit Code");
         assertThat(tables.get(1).depth()).isEqualTo(1);
     }
+
+    @Test
+    void cellTextIncludesNestedTablesAndIconTitles() {
+        String html = """
+                <table><tr><th>Name</th><th>Status</th><th>Satisfied</th></tr>
+                <tr><td><table><tr><td><img src="job.png"></td><td><a href="#">JOB_A</a></td></tr></table></td>
+                <td><img src="s.png" alt="SUCCESS"> </td><td><img title="Yes" src="ok.gif"/></td></tr></table>""";
+
+        HtmlTables.Table table = HtmlTables.parse(html).getFirst();
+
+        assertThat(table.dataRows()).containsExactly(List.of("JOB_A", "SUCCESS", "Yes"));
+    }
+
+    @Test
+    void grepShowsRawMarkupAroundMatches() {
+        ObjectNode c = (ObjectNode) JsonMapper.shared().readTree("""
+                {"seq":7,"request":{"method":"GET","autosysPath":"/wcc/quickview/pages/main.jsf"},
+                 "response":{"status":200,"headers":{}}}""");
+        c.withObject("/response").put("body", PPR);
+        StringBuilder out = new StringBuilder();
+
+        int hits = new CaptureGrep(java.util.regex.Pattern.compile("ViewState"), 20, 5, true).grep(c, out);
+
+        assertThat(hits).isEqualTo(1);
+        assertThat(out.toString())
+                .contains("== seq=7 GET /wcc/quickview/pages/main.jsf -> 200")
+                .contains("[response body @")
+                .contains("name=\"javax.faces.ViewState\" value=\"!abc123\"");
+    }
 }

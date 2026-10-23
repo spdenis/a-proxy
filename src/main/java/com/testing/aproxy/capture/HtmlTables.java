@@ -17,6 +17,8 @@ public final class HtmlTables {
 
     private static final Pattern TABLE_TAG = Pattern.compile("(?is)<(/?)(table|tr|th|td)\\b([^>]*)>");
     private static final Pattern ANY_TAG = Pattern.compile("(?is)<script.*?</script>|<style.*?</style>|<[^>]*>");
+    private static final Pattern IMG = Pattern.compile("(?is)<img\\b([^>]*)>");
+    private static final Pattern ALT = Pattern.compile("(?i)\\b(?:alt|title)\\s*=\\s*[\"']([^\"']+)[\"']");
     private static final Pattern ID = Pattern.compile("(?i)\\bid\\s*=\\s*[\"']([^\"']*)[\"']");
     private static final Pattern SUMMARY = Pattern.compile("(?i)\\bsummary\\s*=\\s*[\"']([^\"']+)[\"']");
 
@@ -55,9 +57,9 @@ public final class HtmlTables {
         int last = 0;
         Matcher m = TABLE_TAG.matcher(source);
         while (m.find()) {
-            if (!open.isEmpty()) {
-                open.peek().text(source.substring(last, m.start()));
-            }
+            // a cell's text includes nested tables (Trinidad wraps links and icons in layout tables)
+            String chunk = source.substring(last, m.start());
+            open.forEach(b -> b.text(chunk));
             last = m.end();
             boolean closing = !m.group(1).isEmpty();
             String tag = m.group(2).toLowerCase(java.util.Locale.ROOT);
@@ -99,7 +101,12 @@ public final class HtmlTables {
     }
 
     public static String text(String html) {
-        String t = ANY_TAG.matcher(html).replaceAll(" ");
+        // status and "satisfied" columns are often icons: use their alt/title text
+        String t = IMG.matcher(html).replaceAll(img -> {
+            Matcher alt = ALT.matcher(img.group(1));
+            return alt.find() ? " " + Matcher.quoteReplacement(alt.group(1)) + " " : " ";
+        });
+        t = ANY_TAG.matcher(t).replaceAll(" ");
         t = t.replace("&nbsp;", " ").replace("&#160;", " ").replace("&lt;", "<").replace("&gt;", ">")
                 .replace("&quot;", "\"").replace("&#39;", "'").replace("&apos;", "'").replace("&amp;", "&");
         return t.replaceAll("\\s+", " ").strip();

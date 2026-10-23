@@ -183,6 +183,16 @@ The dump has every query parameter and form field with its value, the request he
 JSF/Trinidad), the response's partial-page fragment ids and hidden inputs (e.g. `javax.faces.ViewState`), and each
 data table: id, header cells and the first rows.
 
+To find where a text occurs in the whole run, with the raw markup around each match:
+
+```bash
+./gradlew -q analyzeCaptures --args="--grep=AntiXSRFToken"         # saved as GREP.txt
+./gradlew -q analyzeCaptures --args="--grep=711037496 --context=300 --rows=2"
+```
+
+`--context` is the number of characters shown on each side of a match, `--rows` the matches shown per part of a request,
+and `--responses` searches only response headers and bodies (where a token is issued, not where it is sent back).
+
 ## How it works
 
 | Path | Served by |

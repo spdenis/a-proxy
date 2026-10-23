@@ -25,7 +25,8 @@ import tools.jackson.databind.json.JsonMapper;
  * endpoints, small enough to be retyped or photographed from an isolated network.
  * <p>
  * Usage: {@code ./gradlew analyzeCaptures --args="[runDir] [--only=regex] [--values=N] [--no-values] [--brief]"},
- * or for one request in full detail: {@code --args="--dump=<seq> [--rows=N] [--all-tables] [--width=N]"}.
+ * or for one request in full detail: {@code --args="--dump=<seq> [--rows=N] [--all-tables] [--width=N]"},
+ * or to find a text in all requests with the raw markup around it: {@code --args="--grep=<regex> [--context=N] [--rows=N] [--responses]"}.
  * Without a directory the newest run under {@code ./captures} is used. The summary is printed
  * and also written to {@code SUMMARY.txt} in the run directory.
  */
@@ -72,12 +73,21 @@ public final class CaptureAnalyzer {
         boolean showValues = true;
         boolean brief = false;
         Integer dumpSeq = null;
+        String grep = null;
+        int context = 150;
+        boolean responsesOnly = false;
         int rows = 10;
         int width = 60;
         boolean allTables = false;
         for (String arg : args) {
             if (arg.startsWith("--dump=")) {
                 dumpSeq = Integer.parseInt(arg.substring("--dump=".length()));
+            } else if (arg.startsWith("--grep=")) {
+                grep = arg.substring("--grep=".length());
+            } else if (arg.equals("--responses")) {
+                responsesOnly = true;
+            } else if (arg.startsWith("--context=")) {
+                context = Integer.parseInt(arg.substring("--context=".length()));
             } else if (arg.startsWith("--rows=")) {
                 rows = Integer.parseInt(arg.substring("--rows=".length()));
             } else if (arg.startsWith("--width=")) {
@@ -100,6 +110,14 @@ public final class CaptureAnalyzer {
             dir = newestRun(Path.of("captures"));
         }
         PrintStream out = new PrintStream(System.out, true, StandardCharsets.UTF_8);
+        if (grep != null) {
+            String result = new CaptureGrep(Pattern.compile(grep), context, rows, responsesOnly).grep(dir);
+            out.print(result);
+            Path file = dir.resolve("GREP.txt");
+            Files.writeString(file, result);
+            out.println("(written to " + file.toAbsolutePath() + ")");
+            return;
+        }
         if (dumpSeq != null) {
             String dump = new CaptureDump(rows, allTables, width).dump(JSON.readTree(findSeq(dir, dumpSeq).toFile()));
             out.print(dump);
