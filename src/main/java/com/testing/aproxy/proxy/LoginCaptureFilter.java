@@ -109,6 +109,9 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
                 logDiscovery(request, fieldNames(wrapped), cachingResponse.getStatus(),
                         cachingResponse.getHeader(HttpHeaders.LOCATION),
                         cachingResponse.getHeaders(HttpHeaders.SET_COOKIE), true);
+                log.info("[discovery] login response: contentType={} length={} json={}",
+                        cachingResponse.getContentType(), cachingResponse.getContentSize(),
+                        jsonShape(cachingResponse.getContentAsByteArray()));
             }
             if (credentials == null) {
                 log.warn("Login request to {} did not contain fields '{}'/'{}'; check autosys.webui.login.*",
@@ -234,6 +237,47 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
             return List.of("<unreadable>");
         }
         return List.of();
+    }
+
+    /**
+     * Shape of a JSON login response to help choose success/failure rules: field paths with
+     * booleans, numbers and null shown as-is, but every string replaced by {@code <string>}.
+     */
+    static String jsonShape(byte[] body) {
+        if (body.length == 0 || body.length > MAX_JSON_LOGIN_BODY) {
+            return "-";
+        }
+        JsonNode json;
+        try {
+            json = JSON.readTree(body);
+        } catch (RuntimeException e) {
+            return "-";
+        }
+        if (json == null || !(json.isObject() || json.isArray())) {
+            return "-";
+        }
+        List<String> out = new ArrayList<>();
+        describe("", json, 0, out);
+        return out.toString();
+    }
+
+    private static void describe(String path, JsonNode node, int depth, List<String> out) {
+        if (out.size() >= 40) {
+            return;
+        }
+        if (node.isObject() && depth < 4) {
+            for (String name : node.propertyNames()) {
+                describe(path.isEmpty() ? name : path + "." + name, node.get(name), depth + 1, out);
+            }
+        } else if (node.isArray()) {
+            out.add(path + "=<array of " + node.size() + ">");
+        } else if (node.isObject()) {
+            out.add(path + "=<object>");
+        } else if (node.isBoolean() || node.isNumber() || node.isNull()) {
+            out.add(path + "=" + node);
+        } else {
+            out.add(path + "=<string>");
+        }
     }
 
     private void logDiscovery(HttpServletRequest request, List<String> fields, int status, @Nullable String location,

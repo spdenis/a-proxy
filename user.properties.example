@@ -21,10 +21,18 @@ autosys.webui.login.discovery-log=true
 autosys.webui.login.path=/path/to/login/submit
 autosys.webui.login.username-field=username
 autosys.webui.login.password-field=password
-autosys.webui.login.success.statuses=302
-autosys.webui.login.success.location-reject-pattern=(?i)login|error
+# Every rule that is set must hold for a login to count as successful. Compare the [discovery]
+# lines of a good and a bad login and pick what differs. Pick one of the two styles:
+#
+# a) classic form login: answered with a redirect
+#autosys.webui.login.success.statuses=302
+#autosys.webui.login.success.location-reject-pattern=(?i)login|error
+#
+# b) XHR/JSON login (the page's JavaScript posts the credentials): answered with 200 both ways,
+#    so add a rule only a good login passes - a cookie set only on success, or a failure marker
+#autosys.webui.login.success.statuses=200
 #autosys.webui.login.success.cookie=JSESSIONID
-#autosys.webui.login.failure-marker=Invalid user
+#autosys.webui.login.failure-marker="success":false
 
 # --- Logging
 #logging.file.name=logs/a-proxy.log

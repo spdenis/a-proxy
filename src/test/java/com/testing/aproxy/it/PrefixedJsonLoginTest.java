@@ -128,6 +128,7 @@ class PrefixedJsonLoginTest {
 
         assertThat(output.getAll())
                 .contains("[discovery] POST /autosys/rest/auth/login", "fields=[credentials]", "cookieNames=[SID]")
+                .contains("[discovery] login response: contentType=application/json", "json=[ok=true, home=<string>]")
                 .doesNotContain(PASSWORD).doesNotContain(m.group());
     }
 
