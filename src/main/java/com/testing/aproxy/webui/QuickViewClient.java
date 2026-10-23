@@ -130,11 +130,20 @@ public class QuickViewClient {
      */
     private void open(ProxySession session, State state) {
         boolean borrowed = false;
-        if (!state.loggedIn && state.browserSessionUsable && quickview.reuseBrowserSession()
-                && !session.autosysCookies().isEmpty()) {
+        if (!state.loggedIn && state.browserSessionUsable && quickview.reuseBrowserSession()) {
             state.cookies.store(login.path(), session.autosysCookies());
-            state.loggedIn = true;
-            borrowed = true;
+            session.browserCookies().forEach((name, value) -> {
+                if (quickview.excludeBrowserCookies().stream().noneMatch(name::equalsIgnoreCase)) {
+                    state.cookies.put(name, value);
+                }
+            });
+            if (state.cookies.names().isEmpty()) {
+                log.info("[backend] no AutoSys cookies seen from the browser of '{}' yet; logging in as the proxy",
+                        session.username());
+            } else {
+                state.loggedIn = true;
+                borrowed = true;
+            }
         }
         if (!state.loggedIn) {
             login(session, state);
@@ -214,6 +223,11 @@ public class QuickViewClient {
         }
         state.loggedIn = true;
         log.info("[backend] logged in to AutoSys as '{}' (cookies {})", session.username(), state.cookies.names());
+        if (state.cookies.names().isEmpty()) {
+            log.warn("[backend] the login response set no cookies: the AutoSys UI probably sets its session cookie "
+                    + "in JavaScript, which the proxy's own login cannot do. Use the API after browsing AutoSys "
+                    + "through the proxy, so the proxy sees the browser's cookies.");
+        }
     }
 
     private Exchange postSearch(State state, String jobName) {

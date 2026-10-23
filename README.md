@@ -132,8 +132,11 @@ curl -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/jobs?name=M
  "fetchedAt":"2026-10-23T21:30:00Z"}
 ```
 
-How it works: the proxy uses the AutoSys session of your browser login (the cookies AutoSys set on the login
-response), so there is no second login. Only if that session does not open Quick View (or
+How it works: the proxy uses the AutoSys session of your browser login, so there is no second login. At login it
+gives the browser an `ASP_SID` cookie (never forwarded to AutoSys) and from then on remembers the AutoSys cookies that
+browser sends, including those the UI sets in JavaScript; API calls use them, except `JSESSIONID`
+(`autosys.webui.quickview.exclude-browser-cookies`), so they get their own Quick View page state. Browse AutoSys through
+the proxy at least once after logging in before calling the API. Only if that session does not open Quick View (or
 `autosys.webui.quickview.reuse-browser-session=false`) does it log in itself with the captured credentials, replaying
 the browser's login request (same format, extra fields and `X-*` headers; the password comes from the vault); a rejected
 login is logged with the response status, body start and the headers sent. Then it opens WCC Quick View (`autosys.webui.quickview.entry-path`), keeps that session's cookies, `AntiXSRFToken`,

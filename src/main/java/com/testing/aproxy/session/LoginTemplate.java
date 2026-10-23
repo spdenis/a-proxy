@@ -2,6 +2,8 @@ package com.testing.aproxy.session;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -25,7 +27,7 @@ public record LoginTemplate(String contentType, @Nullable String jsonBody, List<
 
     public LoginTemplate {
         formFields = List.copyOf(formFields);
-        headers = Map.copyOf(headers);
+        headers = Collections.unmodifiableMap(new LinkedHashMap<>(headers));
     }
 
     public boolean json() {

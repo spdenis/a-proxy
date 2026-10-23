@@ -49,6 +49,11 @@ final class CookieJar {
         }
     }
 
+    /** A cookie the browser sent (its path is unknown, so it is sent everywhere). */
+    void put(String name, String value) {
+        cookies.put(name + "|/", new Cookie(name, value, "/"));
+    }
+
     /** Cookie header for a request path, most specific path first (as browsers do); null when none. */
     String header(String requestPath) {
         String header = cookies.values().stream()

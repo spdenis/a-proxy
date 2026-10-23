@@ -2,6 +2,9 @@ package com.testing.aproxy.session;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.UUID;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -20,9 +23,11 @@ public final class ProxySession {
     private final @Nullable String clientIp;
     private final @Nullable LoginTemplate loginTemplate;
     private final List<String> autosysCookies;
+    private final ConcurrentMap<String, String> browserCookies = new ConcurrentHashMap<>();
     private final Instant createdAt;
     private final Instant absoluteExpiresAt;
     private final ReentrantLock lock = new ReentrantLock();
+    private volatile @Nullable String browserKeyHash;
     private volatile Instant lastUsedAt;
     private volatile SessionState state = SessionState.ACTIVE;
 
@@ -74,6 +79,27 @@ public final class ProxySession {
         return autosysCookies;
     }
 
+    /**
+     * Latest AutoSys cookies the browser of this session sent through the proxy (name to value,
+     * proxy-owned {@code ASP_} cookies excluded). Covers cookies the UI sets in JavaScript.
+     */
+    public Map<String, String> browserCookies() {
+        return Map.copyOf(browserCookies);
+    }
+
+    public void rememberBrowserCookies(String cookieHeader) {
+        if (state == SessionState.CLOSED) {
+            return;
+        }
+        for (String cookie : cookieHeader.split(";")) {
+            String c = cookie.strip();
+            int eq = c.indexOf('=');
+            if (eq > 0 && !c.startsWith(PendingTokenStore.OWN_COOKIE_PREFIX)) {
+                browserCookies.put(c.substring(0, eq), c.substring(eq + 1));
+            }
+        }
+    }
+
     public Instant createdAt() {
         return createdAt;
     }
@@ -95,6 +121,14 @@ public final class ProxySession {
         return lock;
     }
 
+    @Nullable String browserKeyHash() {
+        return browserKeyHash;
+    }
+
+    void browserKeyHash(String hash) {
+        this.browserKeyHash = hash;
+    }
+
     void touch(Instant now) {
         lastUsedAt = now;
     }
@@ -102,6 +136,7 @@ public final class ProxySession {
     void close() {
         state = SessionState.CLOSED;
         credentials.wipe();
+        browserCookies.clear();
     }
 
     @Override

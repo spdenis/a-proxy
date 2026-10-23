@@ -93,6 +93,7 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
         if (!isLoginRequest(request)) {
+            rememberBrowserCookies(request);
             if (login.discoveryLog() && "POST".equalsIgnoreCase(request.getMethod())) {
                 // Field names only; any body read here is replayed to the proxy.
                 LoginRequestWrapper wrapped = wrapForInspection(request);
@@ -152,6 +153,15 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
                 credentials.template(), setCookies.stream().map(c -> upstreamCookie(c, paths.prefix())).toList());
         audit.loginCaptured(credentials.username(), issued.session().sessionId(), clientIp);
         String ticket = pendingTokens.put(issued.token(), issued.session());
+        // session cookie (no Max-Age): lets the proxy see the AutoSys cookies this browser holds
+        response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from(PendingTokenStore.BROWSER_COOKIE,
+                        issued.browserKey())
+                .httpOnly(true)
+                .secure(request.isSecure())
+                .sameSite("Lax")
+                .path(request.getContextPath() + paths.prefix() + "/")
+                .build()
+                .toString());
         response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from(PendingTokenStore.COOKIE, ticket)
                 .httpOnly(true)
                 .secure(request.isSecure())
@@ -172,6 +182,26 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
         }
         log.info("AutoSys login captured for user '{}'; open {}{} within {} to copy the API token",
                 credentials.username(), ProxyPaths.proxyOrigin(request), ProxyPaths.TOKEN_PAGE, tokenPageTtl);
+    }
+
+    /**
+     * The UI sets some AutoSys cookies in JavaScript (not on the login response); the proxy's own
+     * Quick View requests need them, so remember what the browser of a session sends.
+     */
+    private void rememberBrowserCookies(HttpServletRequest request) {
+        jakarta.servlet.http.Cookie[] cookies = request.getCookies();
+        if (cookies == null) {
+            return;
+        }
+        for (jakarta.servlet.http.Cookie cookie : cookies) {
+            if (cookie.getName().equals(PendingTokenStore.BROWSER_COOKIE)) {
+                String header = request.getHeader(HttpHeaders.COOKIE);
+                if (header != null) {
+                    sessions.byBrowserKey(cookie.getValue()).ifPresent(s -> s.rememberBrowserCookies(header));
+                }
+                return;
+            }
+        }
     }
 
     private boolean isLoginRequest(HttpServletRequest request) {

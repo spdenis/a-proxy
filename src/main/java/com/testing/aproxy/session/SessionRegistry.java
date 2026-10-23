@@ -38,6 +38,8 @@ public class SessionRegistry {
     private final boolean bindClientIp;
     private final Cache<String, ProxySession> sessions;
     private final ConcurrentMap<String, String> tokenHashByUser = new ConcurrentHashMap<>();
+    /* hash of the ASP_SID browser cookie -> token hash */
+    private final ConcurrentMap<String, String> tokenHashByBrowserKey = new ConcurrentHashMap<>();
     private volatile boolean shuttingDown;
 
     public SessionRegistry(AutosysProperties properties, CredentialVault vault, TokenService tokens,
@@ -74,12 +76,15 @@ public class SessionRegistry {
         ProxySession session = new ProxySession(username, tokenHash, vault.seal(password), clientIp, loginTemplate,
                 autosysCookies, now,
                 now.plus(absoluteTtl));
+        String browserKey = tokens.newToken().substring(TokenService.PREFIX.length());
+        session.browserKeyHash(TokenService.hash(browserKey));
+        tokenHashByBrowserKey.put(session.browserKeyHash(), tokenHash);
         String previous = tokenHashByUser.put(username, tokenHash);
         sessions.put(tokenHash, session);
         if (previous != null) {
             sessions.invalidate(previous);
         }
-        return new IssuedSession(token, session);
+        return new IssuedSession(token, browserKey, session);
     }
 
     /** Resolves a raw bearer token to its session and refreshes the idle timer. */
@@ -96,6 +101,12 @@ public class SessionRegistry {
         }
         session.touch(clock.instant());
         return Optional.of(session);
+    }
+
+    /** The session whose browser holds this {@code ASP_SID} cookie; does not refresh the idle timer. */
+    public Optional<ProxySession> byBrowserKey(String browserKey) {
+        String tokenHash = tokenHashByBrowserKey.get(TokenService.hash(browserKey));
+        return Optional.ofNullable(tokenHash == null ? null : sessions.policy().getIfPresentQuietly(tokenHash));
     }
 
     /** Looks up a session by token without refreshing it (e.g. for the token page). */
@@ -129,6 +140,9 @@ public class SessionRegistry {
             return;
         }
         tokenHashByUser.remove(session.username(), session.tokenHash());
+        if (session.browserKeyHash() != null) {
+            tokenHashByBrowserKey.remove(session.browserKeyHash());
+        }
         session.close();
         audit.sessionClosed(session.username(), session.sessionId(), shuttingDown ? "SHUTDOWN" : switch (cause) {
             case EXPIRED -> "EXPIRED";
@@ -163,11 +177,12 @@ public class SessionRegistry {
         }
     }
 
-    public record IssuedSession(String token, ProxySession session) {
+    /** @param browserKey value of the {@code ASP_SID} cookie that links the browser to the session */
+    public record IssuedSession(String token, String browserKey, ProxySession session) {
 
         @Override
         public String toString() {
-            return "IssuedSession[token=***, " + session + "]";
+            return "IssuedSession[token=***, browserKey=***, " + session + "]";
         }
     }
 }

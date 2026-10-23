@@ -55,7 +55,6 @@ class QuickViewApiTest {
         registry.add("autosys.webui.login.username-field", () -> "username");
         registry.add("autosys.webui.login.password-field", () -> "password");
         registry.add("autosys.webui.login.success.statuses", () -> "200");
-        registry.add("autosys.webui.login.success.cookie", () -> "WCC-ASID");
         registry.add("autosys.proxy.start-page", () -> "/ui/Login.html");
     }
 
@@ -196,6 +195,31 @@ class QuickViewApiTest {
     }
 
     @Test
+    void usesCookiesTheUiSetInJavaScript(CapturedOutput output) throws Exception {
+        autosys.stubFor(post("/authentication/login").atPriority(1)
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody("{\"asid\":\"asid-1\"}")));
+        autosys.stubFor(get("/ui/Home.html").willReturn(aResponse().withStatus(200).withBody("<html></html>")));
+        String token = login();
+        assertThat(browser.cookies).containsKey("ASP_SID").doesNotContainKey("WCC-ASID");
+        // the UI's JavaScript sets the session cookie, then the browser loads a page through the proxy
+        browser.cookies.put("WCC-ASID", "asid-1");
+        browser.cookies.put("JSESSIONID", "browser-page-state");
+        browser.get("/ui/Home.html");
+
+        assertThat(api("/api/v1/jobs/TEST_FX_LOADER", token, 200).at("/status/status").asString())
+                .isEqualTo("SUCCESS");
+        autosys.verify(1, postRequestedFor(urlEqualTo("/authentication/login")));
+        // own cookies never reach AutoSys; the browser's JSESSIONID is not reused for API calls
+        autosys.verify(com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor(urlEqualTo("/ui/Home.html"))
+                .withHeader("Cookie", com.github.tomakehurst.wiremock.client.WireMock.notContaining("ASP_")));
+        autosys.verify(0, com.github.tomakehurst.wiremock.client.WireMock.anyRequestedFor(
+                urlPathEqualTo("/wcc/quickview/index.jsp"))
+                .withHeader("Cookie", containing("browser-page-state")));
+        assertThat(output.getAll()).contains("with the browser's AutoSys session").doesNotContain("asid-1");
+    }
+
+    @Test
     void ownLoginWhenTheBrowserSessionDoesNotOpenQuickView(CapturedOutput output) throws Exception {
         stubAutosys("asid-2");
         String token = login();
@@ -220,7 +244,7 @@ class QuickViewApiTest {
         assertThat(problem.at("/type").asString()).isEqualTo("/problems/autosys-login");
         assertThat(problem.at("/detail").asString()).contains("status 403 not in [200]");
         assertThat(output.getAll()).contains("response 403 text/html", "body: <html>CSRF token missing</html>",
-                "sent headers [X-Requested-With, Accept, Origin, Referer")
+                "sent headers [Accept, X-Requested-With, Origin, Referer")
                 .doesNotContain(PASSWORD);
     }
 

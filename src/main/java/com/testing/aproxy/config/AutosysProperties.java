@@ -121,6 +121,11 @@ public record AutosysProperties(
              * the proxy logs in itself only when that session does not open Quick View.
              */
             @DefaultValue("true") boolean reuseBrowserSession,
+            /*
+             * Browser cookies not reused; JSESSIONID by default, so API calls get their own Quick View
+             * page state and do not disturb the browser's.
+             */
+            @DefaultValue("JSESSIONID") List<String> excludeBrowserCookies,
             /* Login and Quick View attempts per API call before giving up. */
             @DefaultValue("2") int maxAttempts) {
 

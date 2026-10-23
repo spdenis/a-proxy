@@ -27,6 +27,9 @@ public class PendingTokenStore {
     /** Marks a browser that should see the token page on its next visit of the landing page. */
     public static final String SHOW_COOKIE = OWN_COOKIE_PREFIX + "SHOW_TOKEN";
 
+    /** Links the browser to its proxy session, so the proxy sees which AutoSys cookies it holds. */
+    public static final String BROWSER_COOKIE = OWN_COOKIE_PREFIX + "SID";
+
     private final SecureRandom random = new SecureRandom();
     private final Cache<String, PendingToken> pending;
 
