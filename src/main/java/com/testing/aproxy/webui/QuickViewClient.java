@@ -143,8 +143,9 @@ public class QuickViewClient {
         HtmlForms.Form form = quickViewForm(page);
         if (form == null && borrowed) {
             log.info("[backend] the browser's AutoSys session of '{}' did not open Quick View (ended at {} with "
-                    + "status {}); logging in as the proxy", session.username(), page.uri().getPath(),
-                    page.exchange().status());
+                    + "status {}, sent cookies {}, body: {}); logging in as the proxy", session.username(),
+                    page.uri().getPath(), page.exchange().status(), state.cookies.names(),
+                    snippet(page.exchange().body()));
             state.reset();
             state.browserSessionUsable = false;
             borrowed = false;
@@ -153,6 +154,9 @@ public class QuickViewClient {
             form = quickViewForm(page);
         }
         if (form == null) {
+            log.warn("[backend] Quick View did not open for '{}': {} {} -> {} {}, sent cookies {}, body: {}",
+                    session.username(), "GET", page.uri().getPath(), page.exchange().status(),
+                    page.exchange().contentType(), state.cookies.names(), snippet(page.exchange().body()));
             state.reset();
             throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-quickview",
                     "Quick View did not open after login (ended at " + page.uri().getPath() + " with status "
