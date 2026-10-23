@@ -24,6 +24,15 @@ class WebUiPartsTest {
     }
 
     @Test
+    void browserCookiesReplaceLoginCookiesOfTheSameNameAndKeepDuplicates() {
+        CookieJar jar = new CookieJar();
+        jar.store("/authentication/login", List.of("WCC-ASID=stale; Path=/wcc", "OTHER=o; Path=/"));
+        jar.putBrowser("WCC-ASID", List.of("a1", "a2"));
+
+        assertThat(jar.header("/wcc/quickview/index.jsp")).isEqualTo("OTHER=o; WCC-ASID=a1; WCC-ASID=a2");
+    }
+
+    @Test
     void statusCodesFromIconTitles() {
         assertThat(JobPage.statusCode("Success (SUCCESS)")).isEqualTo("SUCCESS");
         assertThat(JobPage.statusText("Success (SUCCESS)")).isEqualTo("Success");

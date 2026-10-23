@@ -133,9 +133,9 @@ public class QuickViewClient {
         boolean borrowed = false;
         if (!state.loggedIn && state.browserSessionUsable && quickview.reuseBrowserSession()) {
             state.cookies.store(login.path(), session.autosysCookies());
-            session.browserCookies().forEach((name, value) -> {
+            session.browserCookies().forEach((name, values) -> {
                 if (quickview.excludeBrowserCookies().stream().noneMatch(name::equalsIgnoreCase)) {
-                    state.cookies.put(name, value);
+                    state.cookies.putBrowser(name, values);
                 }
             });
             if (state.cookies.names().isEmpty()) {

@@ -49,9 +49,15 @@ final class CookieJar {
         }
     }
 
-    /** A cookie the browser sent (its path is unknown, so it is sent everywhere). */
-    void put(String name, String value) {
-        cookies.put(name + "|/", new Cookie(name, value, "/"));
+    /**
+     * Cookies of one name as the browser sent them (paths unknown, so sent everywhere, in the
+     * browser's order); they replace any cookie of that name the jar had.
+     */
+    void putBrowser(String name, List<String> values) {
+        cookies.values().removeIf(c -> c.name().equals(name));
+        for (int i = 0; i < values.size(); i++) {
+            cookies.put(name + "|browser|" + i, new Cookie(name, values.get(i), "/"));
+        }
     }
 
     /** Cookie header for a request path, most specific path first (as browsers do); null when none. */

@@ -25,7 +25,8 @@ public final class ProxySession {
     private final @Nullable String clientIp;
     private final @Nullable LoginTemplate loginTemplate;
     private final List<String> autosysCookies;
-    private final ConcurrentMap<String, String> browserCookies = new ConcurrentHashMap<>();
+    /* name -> values in the browser's order (several when cookies of one name exist for different paths) */
+    private final ConcurrentMap<String, List<String>> browserCookies = new ConcurrentHashMap<>();
     private final Instant createdAt;
     private final Instant absoluteExpiresAt;
     private final ReentrantLock lock = new ReentrantLock();
@@ -85,7 +86,7 @@ public final class ProxySession {
      * Latest AutoSys cookies the browser of this session sent through the proxy (name to value,
      * proxy-owned {@code ASP_} cookies excluded). Covers cookies the UI sets in JavaScript.
      */
-    public Map<String, String> browserCookies() {
+    public Map<String, List<String>> browserCookies() {
         return new TreeMap<>(browserCookies);
     }
 
@@ -94,15 +95,21 @@ public final class ProxySession {
         if (state == SessionState.CLOSED) {
             return List.of();
         }
-        List<String> added = new ArrayList<>();
+        // names present in this request replace what was seen before; others (other paths) are kept
+        Map<String, List<String>> seen = new java.util.LinkedHashMap<>();
         for (String cookie : cookieHeader.split(";")) {
             String c = cookie.strip();
             int eq = c.indexOf('=');
-            if (eq > 0 && !c.startsWith(PendingTokenStore.OWN_COOKIE_PREFIX)
-                    && browserCookies.put(c.substring(0, eq), c.substring(eq + 1)) == null) {
-                added.add(c.substring(0, eq));
+            if (eq > 0 && !c.startsWith(PendingTokenStore.OWN_COOKIE_PREFIX)) {
+                seen.computeIfAbsent(c.substring(0, eq), n -> new ArrayList<>()).add(c.substring(eq + 1));
             }
         }
+        List<String> added = new ArrayList<>();
+        seen.forEach((name, values) -> {
+            if (browserCookies.put(name, List.copyOf(values)) == null) {
+                added.add(name);
+            }
+        });
         return added;
     }
 
