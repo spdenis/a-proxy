@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -180,8 +181,10 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
             // e.g. XHR login answered with 200: the UI navigates to the landing page itself; show the token there
             response.addHeader(HttpHeaders.SET_COOKIE, LandingPageFilter.showTokenCookie(request, paths, tokenPageTtl));
         }
-        log.info("AutoSys login captured for user '{}'; open {}{} within {} to copy the API token",
-                credentials.username(), ProxyPaths.proxyOrigin(request), ProxyPaths.TOKEN_PAGE, tokenPageTtl);
+        log.info("AutoSys login captured for user '{}'; open {}{} within {} to copy the API token "
+                + "(browser linked with cookie {}, path {})", credentials.username(), ProxyPaths.proxyOrigin(request),
+                ProxyPaths.TOKEN_PAGE, tokenPageTtl, PendingTokenStore.BROWSER_COOKIE,
+                request.getContextPath() + paths.prefix() + "/");
     }
 
     /**
@@ -198,18 +201,37 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
                 key = c.substring(PendingTokenStore.BROWSER_COOKIE.length() + 1);
             }
         }
+        String path = ProxyPaths.pathOf(request);
         if (key == null) {
+            if (!header.isBlank() && sessions.activeCount() > 0 && quietFor(lastNoBrowserKeyLog)) {
+                log.info("[backend] a browser sends AutoSys cookies but no {} cookie (on {}); log in again through "
+                        + "the proxy to link it to an API session", PendingTokenStore.BROWSER_COOKIE, path);
+            }
             return;
         }
-        String path = ProxyPaths.pathOf(request);
         sessions.byBrowserKey(key).ifPresentOrElse(session -> {
             List<String> added = session.rememberBrowserCookies(header);
             if (!added.isEmpty()) {
                 log.info("[backend] browser of '{}' sends AutoSys cookies {} (new: {}, on {})", session.username(),
                         session.browserCookies().keySet(), added, path);
             }
-        }, () -> log.debug("[backend] {} cookie of an unknown or closed session on {}",
-                PendingTokenStore.BROWSER_COOKIE, path));
+        }, () -> {
+            if (quietFor(lastUnknownBrowserKeyLog)) {
+                log.info("[backend] the browser's {} cookie belongs to no active session (proxy restarted or a newer "
+                        + "login replaced it) on {}; log in again through the proxy", PendingTokenStore.BROWSER_COOKIE,
+                        path);
+            }
+        });
+    }
+
+    private final AtomicLong lastNoBrowserKeyLog = new AtomicLong();
+    private final AtomicLong lastUnknownBrowserKeyLog = new AtomicLong();
+
+    /** At most one such log line per minute. */
+    private static boolean quietFor(AtomicLong last) {
+        long now = System.currentTimeMillis();
+        long previous = last.get();
+        return now - previous > 60_000 && last.compareAndSet(previous, now);
     }
 
     private boolean isLoginRequest(HttpServletRequest request) {
