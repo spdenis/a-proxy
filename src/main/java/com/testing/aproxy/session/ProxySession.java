@@ -17,6 +17,7 @@ public final class ProxySession {
     private final String tokenHash;
     private final CredentialVault.SealedSecret credentials;
     private final @Nullable String clientIp;
+    private final @Nullable LoginTemplate loginTemplate;
     private final Instant createdAt;
     private final Instant absoluteExpiresAt;
     private final ReentrantLock lock = new ReentrantLock();
@@ -24,11 +25,12 @@ public final class ProxySession {
     private volatile SessionState state = SessionState.ACTIVE;
 
     ProxySession(String username, String tokenHash, CredentialVault.SealedSecret credentials,
-            @Nullable String clientIp, Instant now, Instant absoluteExpiresAt) {
+            @Nullable String clientIp, @Nullable LoginTemplate loginTemplate, Instant now, Instant absoluteExpiresAt) {
         this.username = username;
         this.tokenHash = tokenHash;
         this.credentials = credentials;
         this.clientIp = clientIp;
+        this.loginTemplate = loginTemplate;
         this.createdAt = now;
         this.lastUsedAt = now;
         this.absoluteExpiresAt = absoluteExpiresAt;
@@ -55,6 +57,11 @@ public final class ProxySession {
         return clientIp;
     }
 
+    /** How the browser logged in, for the proxy's own AutoSys login; null if not recorded. */
+    public @Nullable LoginTemplate loginTemplate() {
+        return loginTemplate;
+    }
+
     public Instant createdAt() {
         return createdAt;
     }
@@ -71,7 +78,7 @@ public final class ProxySession {
         return state;
     }
 
-    /** Serialises backend re-login for this session (used once the proxy logs in to AutoSys itself). */
+    /** Serialises backend re-login for this session and the proxy's own AutoSys requests for this session. */
     public ReentrantLock lock() {
         return lock;
     }

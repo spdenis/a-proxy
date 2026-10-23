@@ -45,8 +45,8 @@ public class StartupSummary {
         log.info("AutoSys UI:   {}{}/  ->  {} (environment {})", base, paths.prefix(), properties.baseUrl(),
                 properties.environment());
         log.info("Token page:   {}{}   (after logging in on the AutoSys page)", base, ProxyPaths.TOKEN_PAGE);
-        log.info("API:          {}/api/v1/session  (send the token as a Bearer token in the Authorization header)",
-                base);
+        log.info("API:          {}/api/v1/session, {}/api/v1/jobs/<name>  (send the token as a Bearer token in the "
+                + "Authorization header)", base, base);
         log.info("Login capture: {}; logs: {}", classifier.isConfigured()
                 ? "configured for " + properties.webui().login().method() + " " + properties.webui().login().path()
                 : "NOT configured (no token will be issued)",

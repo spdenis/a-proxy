@@ -67,11 +67,11 @@ class CaptureDumpTest {
         String html = """
                 <table><tr><th>Name</th><th>Status</th><th>Satisfied</th></tr>
                 <tr><td><table><tr><td><img src="job.png"></td><td><a href="#">JOB_A</a></td></tr></table></td>
-                <td><img src="s.png" alt="SUCCESS"> </td><td><img title="Yes" src="ok.gif"/></td></tr></table>""";
+                <td><img title="Success" alt="Success (SUCCESS)" src="s.png"> </td><td><img title="Yes" src="ok.gif"/></td></tr></table>""";
 
         HtmlTables.Table table = HtmlTables.parse(html).getFirst();
 
-        assertThat(table.dataRows()).containsExactly(List.of("JOB_A", "SUCCESS", "Yes"));
+        assertThat(table.dataRows()).containsExactly(List.of("JOB_A", "Success (SUCCESS)", "Yes"));
     }
 
     @Test

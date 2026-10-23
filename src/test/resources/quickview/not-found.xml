@@ -1,0 +1,7 @@
+<?xml version="1.0" ?>
+<content action="/wcc/quickview/pages/main.jsf?AntiXSRFToken=XSRF-1&amp;conversationContext=1">
+<fragment><![CDATA[<form id="jobDetailsForm" name="jobDetailsForm" method="POST" action="/wcc/quickview/pages/main.jsf?AntiXSRFToken=XSRF-1&amp;conversationContext=1">
+<table summary=""><tr><th>Name</th><th>Box Name</th><th>Start Time</th><th>End Time</th><th>Status</th><th>Run</th><th>Priority</th><th>Exit Code</th></tr>
+<tr><td colspan="8">No results found.</td></tr></table>
+<span id="tr_jobDetailsForm_Postscript"><input type="hidden" name="javax.faces.ViewState" value="!VS-2"></span></form>]]></fragment>
+</content>

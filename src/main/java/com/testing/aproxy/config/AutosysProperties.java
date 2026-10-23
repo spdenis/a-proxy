@@ -98,7 +98,30 @@ public record AutosysProperties(
     public record Token(@DefaultValue("false") boolean bindClientIp) {
     }
 
-    public record Webui(@Valid @DefaultValue Login login) {
+    public record Webui(@Valid @DefaultValue Login login, @Valid @DefaultValue Quickview quickview) {
+    }
+
+    /**
+     * WCC Quick View (JSF/Trinidad) pages that the proxy drives itself to answer API calls,
+     * with its own AutoSys session per proxy session. Paths are relative to the base URL.
+     */
+    public record Quickview(
+            /* Page that starts a Quick View session; it redirects to the page with the CSRF tokens. */
+            @DefaultValue("/wcc/quickview/index.jsp") String entryPath,
+            /* Optional page fetched before the backend login (when AutoSys needs its cookies first). */
+            @Nullable String loginPage,
+            /* id/name of the form that holds the job search. */
+            @DefaultValue("jobDetailsForm") String form,
+            @DefaultValue("jobNameInput") String searchField,
+            @DefaultValue("goButtonID") String searchButton,
+            /* Trinidad partial-page event sent with the search. */
+            @DefaultValue("autosub") String searchEvent,
+            /* Login and Quick View attempts per API call before giving up. */
+            @DefaultValue("2") int maxAttempts) {
+
+        public Quickview {
+            loginPage = blankToNull(loginPage);
+        }
     }
 
     /** How the AutoSys login exchange looks on the wire (filled from discovery D1). */

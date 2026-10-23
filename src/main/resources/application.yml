@@ -56,6 +56,15 @@ autosys:
       discovery-log: false          # log the shape (never values) of POSTs to fill in this section
       redirect-to-token-page: true
       landing-page:                 # e.g. /ui/Home.html: page after login; first visit shows /proxy/token
+    # WCC Quick View, driven by the proxy itself (own AutoSys login per session) to answer /api/v1/jobs
+    quickview:
+      entry-path: /wcc/quickview/index.jsp   # redirects to main.jsf with the CSRF tokens
+      login-page:                   # optional page fetched before the proxy's own login
+      form: jobDetailsForm
+      search-field: jobNameInput
+      search-button: goButtonID
+      search-event: autosub
+      max-attempts: 2               # 2 = log in again once when the AutoSys session has expired
 
   # Record AutoSys UI traffic (secrets masked) to learn its internal endpoints. Development only.
   capture:

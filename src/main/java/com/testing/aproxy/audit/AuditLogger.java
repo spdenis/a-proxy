@@ -28,6 +28,12 @@ public class AuditLogger {
         write("LOGIN_FAILED", username, clientIp, Map.of("reason", reason));
     }
 
+    /** The proxy logged in to AutoSys itself (for API calls) with the credentials of a session. */
+    public void backendLogin(String username, String sessionId, boolean success, String reason) {
+        write(success ? "BACKEND_LOGIN" : "BACKEND_LOGIN_FAILED", username, null,
+                Map.of("sessionId", sessionId, "reason", reason));
+    }
+
     public void sessionClosed(String username, String sessionId, String reason) {
         write("SESSION_CLOSED", username, null, Map.of("sessionId", sessionId, "reason", reason));
     }

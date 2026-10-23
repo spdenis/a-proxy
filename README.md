@@ -111,6 +111,46 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/se
 
 A missing, wrong, expired or revoked token gives `401` with `application/problem+json` (`/problems/token-invalid`).
 
+### Job API (read-only)
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/jobs/MY_JOB                # everything below
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/jobs/MY_JOB/status         # current status row
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/jobs/MY_JOB/dependencies   # conditions + dependents
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/jobs/MY_JOB/runs           # run history
+curl -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/jobs?name=MY_JOB*"         # search
+```
+
+```json
+{"name":"MY_JOB",
+ "status":{"name":"MY_JOB","box":"MY_BOX","startTime":"Oct 23, 2026 3:44:41 PM","endTime":"Oct 23, 2026 3:45:06 PM",
+           "status":"SUCCESS","statusText":"Success","run":"711037496","priority":null,"exitCode":"0"},
+ "attributes":{"Name":"MY_JOB","Description":"...","Send to machine":"host","Condition":"s(OTHER_JOB,10.00)", "...":"..."},
+ "conditions":[{"condition":"OTHER_JOB","expectedValue":"SUCCESS","currentStatus":"Success","satisfied":true,"satisfiedText":"Yes"}],
+ "dependents":[{"jobName":"NEXT_JOB","condition":"s(MY_JOB)","satisfied":null,"satisfiedText":null}],
+ "resources":[], "runs":[{"startTime":"...","endTime":"...","status":"SUCCESS","statusText":"SUCCESS","run":"711037496/2","exitCode":"0","machine":"host"}],
+ "fetchedAt":"2026-10-23T21:30:00Z"}
+```
+
+How it works: on the first API call the proxy logs in to AutoSys itself with the captured credentials, replaying the
+browser's login request (same format, extra fields and `X-*` headers; the password comes from the vault). Then it opens
+WCC Quick View (`autosys.webui.quickview.entry-path`), keeps that session's cookies, `AntiXSRFToken`,
+`conversationContext` and `javax.faces.ViewState`, and submits the job search as the UI does (Trinidad partial-page
+request). When the answer is not a partial-page response (session expired, redirect to login), it logs in again and
+retries once. Calls of one session run one at a time. Times are as Quick View shows them (`Accept-Language: en-US`).
+
+| Problem type | Status | Meaning |
+|---|---|---|
+| `/problems/job-not-found` | 404 | Quick View showed no job of that name |
+| `/problems/invalid-job-name` | 400 | name has characters other than letters, digits, `_ - . #` (search also `* %`) |
+| `/problems/autosys-login` | 502 | AutoSys rejected the proxy's own login (reason in `detail`; the AUDIT log has `BACKEND_LOGIN_FAILED`) |
+| `/problems/autosys-quickview` | 502 | Quick View did not open after login (check `entry-path`) |
+| `/problems/autosys-session` | 502 | Quick View kept refusing the search after logging in again |
+| `/problems/autosys-unreachable` | 502 | connection error or timeout |
+| `/problems/login-not-recorded` | 409 | session created before this feature; log in through the proxy again |
+
+Set `logging.level.com.testing.aproxy.webui=DEBUG` to see each request the proxy makes to AutoSys (paths only).
+
 ## Capture mode: record the AutoSys UI's internal requests
 
 The job API has to make the same internal requests the AutoSys UI makes. To find out what those are,
@@ -221,13 +261,14 @@ and `--responses` searches only response headers and bodies (where a token is is
   This protects against accidental logging/serialisation, not against someone dumping the JVM memory.
 - `autosys.environment` must be in `autosys.allowed-environments` (default `DEV, UAT`), or the app refuses to start.
 
-## Known limitations (phase 1)
+## Known limitations
 
 - WebSockets are not proxied (Spring Cloud Gateway MVC does not support them).
 - SSO logins (SAML/OIDC/Kerberos) are out of scope.
 - Multipart logins are not captured.
-- No server-side AutoSys login yet: the token proves a successful browser login and holds the credentials
-  for the upcoming job API.
+- The job API is read-only; start/force start/kill come next.
+- The proxy's own AutoSys session is not logged out when the proxy session ends; it times out on the AutoSys side.
+- Only the first page of search results is returned.
 
 ## Build & test
 

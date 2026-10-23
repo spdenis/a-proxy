@@ -9,11 +9,15 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import com.testing.aproxy.audit.AuditLogger;
 import com.testing.aproxy.config.AutosysProperties;
+import com.testing.aproxy.session.LoginTemplate;
 import com.testing.aproxy.session.PendingTokenStore;
 import com.testing.aproxy.session.SessionRegistry;
 import jakarta.servlet.FilterChain;
@@ -142,7 +146,8 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
             return;
         }
 
-        var issued = sessions.create(credentials.username(), credentials.password(), clientIp);
+        var issued = sessions.create(credentials.username(), credentials.password(), clientIp,
+                credentials.template());
         audit.loginCaptured(credentials.username(), issued.session().sessionId(), clientIp);
         String ticket = pendingTokens.put(issued.token(), issued.session());
         response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from(PendingTokenStore.COOKIE, ticket)
@@ -187,10 +192,21 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
     private @Nullable Credentials extractCredentials(LoginRequestWrapper request) throws IOException {
         String username;
         String password;
+        LoginTemplate template;
         if (isForm(request)) {
             // The container parses the form; Spring Cloud Gateway's FormFilter re-encodes it for forwarding.
             username = request.getParameter(login.usernameField());
             password = request.getParameter(login.passwordField());
+            List<Map.Entry<String, String>> fields = new ArrayList<>();
+            request.getParameterMap().forEach((name, values) -> {
+                if (!name.equals(login.passwordField())) {
+                    for (String value : values) {
+                        fields.add(Map.entry(name, value));
+                    }
+                }
+            });
+            template = new LoginTemplate(request.getContentType(), null, fields, login.passwordField(),
+                    templateHeaders(request));
         } else if (isJson(request)) {
             byte[] body = StreamUtils.copyToByteArray(request.getInputStream());
             if (body.length == 0 || body.length > MAX_JSON_LOGIN_BODY) {
@@ -206,13 +222,29 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
             }
             username = jsonField(json, login.usernameField());
             password = jsonField(json, login.passwordField());
+            LoginTemplate.removeJsonField(json, login.passwordField());
+            template = new LoginTemplate(request.getContentType(), JSON.writeValueAsString(json), List.of(),
+                    login.passwordField(), templateHeaders(request));
         } else {
             return null;
         }
         if (username == null || username.isBlank() || password == null || password.isEmpty()) {
             return null;
         }
-        return new Credentials(username.strip(), password.toCharArray());
+        return new Credentials(username.strip(), password.toCharArray(), template);
+    }
+
+    /** {@code X-*} headers the UI adds to its login call (never cookies, auth or forwarding headers). */
+    private Map<String, String> templateHeaders(HttpServletRequest request) {
+        Map<String, String> headers = new LinkedHashMap<>();
+        for (String name : Collections.list(request.getHeaderNames())) {
+            String lower = name.toLowerCase(Locale.ROOT);
+            if ((lower.startsWith("x-") && !lower.startsWith("x-forwarded") && !lower.contains("csrf")
+                    && !lower.contains("token") && !lower.contains("auth")) || lower.equals("accept")) {
+                headers.put(name, request.getHeader(name));
+            }
+        }
+        return headers;
     }
 
     /** Supports dotted paths such as {@code credentials.user}. */
@@ -328,7 +360,7 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
         }
     }
 
-    private record Credentials(String username, char[] password) {
+    private record Credentials(String username, char[] password, LoginTemplate template) {
 
         void wipe() {
             Arrays.fill(password, '\0');

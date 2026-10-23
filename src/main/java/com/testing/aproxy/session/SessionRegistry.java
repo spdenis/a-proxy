@@ -62,10 +62,15 @@ public class SessionRegistry {
      * session of the same user is closed. The caller must wipe {@code password} afterwards.
      */
     public IssuedSession create(String username, char[] password, @Nullable String clientIp) {
+        return create(username, password, clientIp, null);
+    }
+
+    public IssuedSession create(String username, char[] password, @Nullable String clientIp,
+            @Nullable LoginTemplate loginTemplate) {
         Instant now = clock.instant();
         String token = tokens.newToken();
         String tokenHash = TokenService.hash(token);
-        ProxySession session = new ProxySession(username, tokenHash, vault.seal(password), clientIp, now,
+        ProxySession session = new ProxySession(username, tokenHash, vault.seal(password), clientIp, loginTemplate, now,
                 now.plus(absoluteTtl));
         String previous = tokenHashByUser.put(username, tokenHash);
         sessions.put(tokenHash, session);
