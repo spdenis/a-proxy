@@ -24,7 +24,8 @@ import tools.jackson.databind.json.JsonMapper;
  * Turns a capture run directory into a compact text summary of the AutoSys UI's internal
  * endpoints, small enough to be retyped or photographed from an isolated network.
  * <p>
- * Usage: {@code ./gradlew analyzeCaptures --args="[runDir] [--only=regex] [--values=N] [--no-values] [--brief]"}.
+ * Usage: {@code ./gradlew analyzeCaptures --args="[runDir] [--only=regex] [--values=N] [--no-values] [--brief]"},
+ * or for one request in full detail: {@code --args="--dump=<seq> [--rows=N] [--all-tables] [--width=N]"}.
  * Without a directory the newest run under {@code ./captures} is used. The summary is printed
  * and also written to {@code SUMMARY.txt} in the run directory.
  */
@@ -70,8 +71,20 @@ public final class CaptureAnalyzer {
         int values = 3;
         boolean showValues = true;
         boolean brief = false;
+        Integer dumpSeq = null;
+        int rows = 10;
+        int width = 60;
+        boolean allTables = false;
         for (String arg : args) {
-            if (arg.startsWith("--only=")) {
+            if (arg.startsWith("--dump=")) {
+                dumpSeq = Integer.parseInt(arg.substring("--dump=".length()));
+            } else if (arg.startsWith("--rows=")) {
+                rows = Integer.parseInt(arg.substring("--rows=".length()));
+            } else if (arg.startsWith("--width=")) {
+                width = Integer.parseInt(arg.substring("--width=".length()));
+            } else if (arg.equals("--all-tables")) {
+                allTables = true;
+            } else if (arg.startsWith("--only=")) {
                 only = arg.substring("--only=".length());
             } else if (arg.startsWith("--values=")) {
                 values = Integer.parseInt(arg.substring("--values=".length()));
@@ -86,13 +99,29 @@ public final class CaptureAnalyzer {
         if (dir == null) {
             dir = newestRun(Path.of("captures"));
         }
+        PrintStream out = new PrintStream(System.out, true, StandardCharsets.UTF_8);
+        if (dumpSeq != null) {
+            String dump = new CaptureDump(rows, allTables, width).dump(JSON.readTree(findSeq(dir, dumpSeq).toFile()));
+            out.print(dump);
+            Path file = dir.resolve("DUMP-%04d.txt".formatted(dumpSeq));
+            Files.writeString(file, dump);
+            out.println("(written to " + file.toAbsolutePath() + ")");
+            return;
+        }
         String summary = new CaptureAnalyzer(values, showValues).analyze(dir, only == null ? null : Pattern.compile(only),
                 brief);
-        PrintStream out = new PrintStream(System.out, true, StandardCharsets.UTF_8);
         out.print(summary);
         Path file = dir.resolve(brief ? "SUMMARY-brief.txt" : "SUMMARY.txt");
         Files.writeString(file, summary);
         out.println("(written to " + file.toAbsolutePath() + ")");
+    }
+
+    static Path findSeq(Path dir, int seq) throws IOException {
+        String prefix = "%04d-".formatted(seq);
+        try (Stream<Path> files = Files.list(dir)) {
+            return files.filter(f -> f.getFileName().toString().startsWith(prefix)).findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("No capture with seq " + seq + " in " + dir));
+        }
     }
 
     static Path newestRun(Path root) throws IOException {

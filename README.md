@@ -172,6 +172,17 @@ The summary is printed and saved as `SUMMARY.txt` in the run directory. It has t
 
 Sample values are cut to 40 characters; check them for job names you do not want to share, or use `--no-values`.
 
+For one request in full detail (the `seq` numbers are in the TIMELINE):
+
+```bash
+./gradlew -q analyzeCaptures --args="--dump=84"                  # saved as DUMP-0084.txt
+./gradlew -q analyzeCaptures --args="--dump=84 --rows=30 --all-tables --width=100"
+```
+
+The dump has every query parameter and form field with its value, the request headers that matter (CSRF, `X-*`,
+JSF/Trinidad), the response's partial-page fragment ids and hidden inputs (e.g. `javax.faces.ViewState`), and each
+data table: id, header cells and the first rows.
+
 ## How it works
 
 | Path | Served by |
