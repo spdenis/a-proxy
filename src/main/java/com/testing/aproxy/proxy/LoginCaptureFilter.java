@@ -189,19 +189,27 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
      * Quick View requests need them, so remember what the browser of a session sends.
      */
     private void rememberBrowserCookies(HttpServletRequest request) {
-        jakarta.servlet.http.Cookie[] cookies = request.getCookies();
-        if (cookies == null) {
-            return;
-        }
-        for (jakarta.servlet.http.Cookie cookie : cookies) {
-            if (cookie.getName().equals(PendingTokenStore.BROWSER_COOKIE)) {
-                String header = request.getHeader(HttpHeaders.COOKIE);
-                if (header != null) {
-                    sessions.byBrowserKey(cookie.getValue()).ifPresent(s -> s.rememberBrowserCookies(header));
-                }
-                return;
+        // raw headers: the container's cookie parser may drop cookies whose values it considers invalid
+        String header = String.join("; ", Collections.list(request.getHeaders(HttpHeaders.COOKIE)));
+        String key = null;
+        for (String cookie : header.split(";")) {
+            String c = cookie.strip();
+            if (c.startsWith(PendingTokenStore.BROWSER_COOKIE + "=")) {
+                key = c.substring(PendingTokenStore.BROWSER_COOKIE.length() + 1);
             }
         }
+        if (key == null) {
+            return;
+        }
+        String path = ProxyPaths.pathOf(request);
+        sessions.byBrowserKey(key).ifPresentOrElse(session -> {
+            List<String> added = session.rememberBrowserCookies(header);
+            if (!added.isEmpty()) {
+                log.info("[backend] browser of '{}' sends AutoSys cookies {} (new: {}, on {})", session.username(),
+                        session.browserCookies().keySet(), added, path);
+            }
+        }, () -> log.debug("[backend] {} cookie of an unknown or closed session on {}",
+                PendingTokenStore.BROWSER_COOKIE, path));
     }
 
     private boolean isLoginRequest(HttpServletRequest request) {

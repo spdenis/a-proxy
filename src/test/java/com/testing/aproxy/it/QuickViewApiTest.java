@@ -205,7 +205,10 @@ class QuickViewApiTest {
         // the UI's JavaScript sets the session cookie, then the browser loads a page through the proxy
         browser.cookies.put("WCC-ASID", "asid-1");
         browser.cookies.put("JSESSIONID", "browser-page-state");
+        browser.cookies.put("wccDashboard81900", "{\"tabs\":[1,2],\"x\":\"a b\"}");
         browser.get("/ui/Home.html");
+        assertThat(api("/api/v1/session", token, 200).at("/browserCookies").toString())
+                .isEqualTo("[\"JSESSIONID\",\"WCC-ASID\",\"wccDashboard81900\"]");
 
         assertThat(api("/api/v1/jobs/TEST_FX_LOADER", token, 200).at("/status/status").asString())
                 .isEqualTo("SUCCESS");
@@ -216,7 +219,8 @@ class QuickViewApiTest {
         autosys.verify(0, com.github.tomakehurst.wiremock.client.WireMock.anyRequestedFor(
                 urlPathEqualTo("/wcc/quickview/index.jsp"))
                 .withHeader("Cookie", containing("browser-page-state")));
-        assertThat(output.getAll()).contains("with the browser's AutoSys session").doesNotContain("asid-1");
+        assertThat(output.getAll()).contains("with the browser's AutoSys session").doesNotContain("asid-1")
+                .contains("browser of 'carol' sends AutoSys cookies [JSESSIONID, WCC-ASID, wccDashboard81900]");
     }
 
     @Test

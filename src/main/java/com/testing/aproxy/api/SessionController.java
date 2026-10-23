@@ -1,6 +1,7 @@
 package com.testing.aproxy.api;
 
 import java.time.Instant;
+import java.util.List;
 
 import com.testing.aproxy.session.ProxySession;
 import com.testing.aproxy.session.SessionRegistry;
@@ -26,7 +27,8 @@ public class SessionController {
     @GetMapping("/session")
     public SessionInfo current(@AuthenticationPrincipal ProxySession session) {
         return new SessionInfo(session.sessionId(), session.username(), session.state(), session.createdAt(),
-                session.lastUsedAt(), sessions.idleExpiresAt(session), session.absoluteExpiresAt());
+                session.lastUsedAt(), sessions.idleExpiresAt(session), session.absoluteExpiresAt(),
+                List.copyOf(session.browserCookies().keySet()));
     }
 
     /** Revokes the token and wipes the captured credentials. */
@@ -37,6 +39,8 @@ public class SessionController {
     }
 
     public record SessionInfo(String sessionId, String username, SessionState state, Instant createdAt,
-            Instant lastUsedAt, Instant expiresAt, Instant absoluteExpiresAt) {
+            Instant lastUsedAt, Instant expiresAt, Instant absoluteExpiresAt,
+            /* names only: AutoSys cookies the browser of this session sent through the proxy */
+            List<String> browserCookies) {
     }
 }

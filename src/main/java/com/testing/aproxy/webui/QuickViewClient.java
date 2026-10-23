@@ -20,6 +20,7 @@ import com.testing.aproxy.config.AutosysProperties;
 import com.testing.aproxy.proxy.LoginClassifier;
 import com.testing.aproxy.session.CredentialVault;
 import com.testing.aproxy.session.LoginTemplate;
+import com.testing.aproxy.session.PendingTokenStore;
 import com.testing.aproxy.session.ProxySession;
 
 import org.apache.hc.client5.http.classic.methods.HttpGet;
@@ -138,8 +139,9 @@ public class QuickViewClient {
                 }
             });
             if (state.cookies.names().isEmpty()) {
-                log.info("[backend] no AutoSys cookies seen from the browser of '{}' yet; logging in as the proxy",
-                        session.username());
+                log.info("[backend] no AutoSys cookies seen from the browser of '{}' yet (it must load an AutoSys "
+                        + "page through the proxy after logging in, and send the {} cookie); logging in as the proxy",
+                        session.username(), PendingTokenStore.BROWSER_COOKIE);
             } else {
                 state.loggedIn = true;
                 borrowed = true;

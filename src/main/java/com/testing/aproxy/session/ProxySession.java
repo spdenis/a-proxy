@@ -1,8 +1,10 @@
 package com.testing.aproxy.session;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.UUID;
@@ -84,20 +86,24 @@ public final class ProxySession {
      * proxy-owned {@code ASP_} cookies excluded). Covers cookies the UI sets in JavaScript.
      */
     public Map<String, String> browserCookies() {
-        return Map.copyOf(browserCookies);
+        return new TreeMap<>(browserCookies);
     }
 
-    public void rememberBrowserCookies(String cookieHeader) {
+    /** @return names of cookies not seen before */
+    public List<String> rememberBrowserCookies(String cookieHeader) {
         if (state == SessionState.CLOSED) {
-            return;
+            return List.of();
         }
+        List<String> added = new ArrayList<>();
         for (String cookie : cookieHeader.split(";")) {
             String c = cookie.strip();
             int eq = c.indexOf('=');
-            if (eq > 0 && !c.startsWith(PendingTokenStore.OWN_COOKIE_PREFIX)) {
-                browserCookies.put(c.substring(0, eq), c.substring(eq + 1));
+            if (eq > 0 && !c.startsWith(PendingTokenStore.OWN_COOKIE_PREFIX)
+                    && browserCookies.put(c.substring(0, eq), c.substring(eq + 1)) == null) {
+                added.add(c.substring(0, eq));
             }
         }
+        return added;
     }
 
     public Instant createdAt() {
