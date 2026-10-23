@@ -13,21 +13,45 @@ AutoSys session / re-login are not implemented yet.
 Requirements: Java 21. Everything else comes through the Gradle wrapper.
 
 ```bash
-cp src/main/resources/application-local.yml.example src/main/resources/application-local.yml
-# edit base-url (+ truststore if AutoSys uses an internal CA)
-./gradlew bootRun --args='--spring.profiles.active=local'
-# or: ./gradlew bootJar && java -jar build/libs/a-proxy-0.1.0-SNAPSHOT.jar --spring.profiles.active=local
+cp user.properties.example user.properties    # then edit it
+./gradlew bootRun
+# or: ./gradlew bootJar && java -jar build/libs/a-proxy-0.1.0-SNAPSHOT.jar
+```
+
+Configuration is read from **`user.properties` in the working directory** (the directory you start the
+proxy from). It overrides the defaults in `src/main/resources/application.yml`; any property listed there
+can be set. The file is git-ignored, so keep real hostnames there. To use another file, pass
+`--aproxy.user-properties=/path/to/file.properties`.
+
+On startup the log shows which file was loaded, where the proxy listens and where it forwards to:
+
+```
+Configuration: loaded /home/me/a-proxy/user.properties
+AutoSys UI:   http://localhost:8080/  ->  https://autosys-host:8443 (environment DEV)
+Token page:   http://localhost:8080/proxy/token   (after logging in on the AutoSys page)
 ```
 
 Open <http://localhost:8080/>. You should see the AutoSys login page served through the proxy.
-`application-local.yml` is git-ignored; keep real hostnames there, not in the repo.
+
+### Logs
+
+Logs go to the console **and** to `logs/a-proxy.log` (rolls at 10 MB, kept 7 days; `logging.file.name` changes the path).
+
+- `ACCESS`: one line per request, e.g. `GET /wcc/ui/home -> https://autosys-host:8443 200 34 ms`. Query
+  strings are never logged. Turn off with `autosys.proxy.access-log=false`.
+- `AUDIT`: JSON lines for `LOGIN_CAPTURED`, `LOGIN_FAILED`, `SESSION_CLOSED`.
+- Login capture result: `AutoSys login captured for user 'alice'; open http://localhost:8080/proxy/token ...`
+  or why a login was not accepted.
+- More detail: `logging.level.com.testing.aproxy=DEBUG`.
+
+Passwords, tokens, cookies and `Authorization` values are masked in every log line.
 
 ### Teach the proxy how your AutoSys login looks
 
 The login request and the "success" signal differ between AutoSys versions, so they are configured,
-not coded (`autosys.webui.login.*`):
+not coded (`autosys.webui.login.*` in `user.properties`):
 
-1. Set `autosys.webui.login.discovery-log: true` and log in once through the proxy. For every POST the
+1. Set `autosys.webui.login.discovery-log=true` and log in once through the proxy. For every POST the
    log shows a line with the path, content type, **field names** (never values), response status,
    redirect target and **cookie names**:
    ```
@@ -38,21 +62,41 @@ not coded (`autosys.webui.login.*`):
    - `path`: the login POST path (AutoSys-relative, Ant pattern allowed).
    - `username-field` / `password-field`: form field or JSON property (dotted path such as `credentials.user` for nested JSON).
    - `success.*`: what only a good login does. Every rule you set must hold:
-     `statuses` (e.g. `[302]`), `location-pattern` / `location-reject-pattern` (regex on the redirect target),
+     `statuses` (e.g. `302`), `location-pattern` / `location-reject-pattern` (regex on the redirect target),
      `cookie` (cookie set on success).
    - `failure-marker`: text in the body of a failed-login response.
-4. Restart and log in. On success the browser is sent to `/proxy/token` (when the login ends with a redirect),
-   which shows the token for a few minutes. It has a link back to AutoSys. For XHR/JSON logins without a redirect, open
-   <http://localhost:8080/proxy/token> manually.
+4. Restart. The startup log should say `Login capture: configured for POST <path>`.
 
 Until success rules are configured, logins pass through normally but no token is issued (a warning is logged at startup).
 
+### Get the API token
+
+1. Open <http://localhost:8080/> and log in on the normal AutoSys page.
+2. If the login ends with a redirect, the browser goes to <http://localhost:8080/proxy/token> on its own.
+   Otherwise open that page yourself. It shows the token (`asp_...`) with a **Copy token** button and a link back to AutoSys.
+3. The page only shows the token for 5 minutes after login (`autosys.session.token-page-ttl`), and only in the
+   browser that logged in. To get a new token, log in again. That replaces the previous token.
+
+The token stays valid for 8 hours without use (`autosys.session.idle-ttl`) and 24 hours at most
+(`autosys.session.absolute-ttl`), or until it is revoked or the proxy restarts.
+
 ### Use the token
 
+Send it in the `Authorization` header as a Bearer token:
+
 ```bash
-curl -H "Authorization: Bearer asp_..." http://localhost:8080/api/v1/session
-curl -X DELETE -H "Authorization: Bearer asp_..." http://localhost:8080/api/v1/sessions/current   # revoke
+TOKEN=asp_...   # from /proxy/token
+
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/session          # who am I, expiry
+curl -X DELETE -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/sessions/current   # revoke
 ```
+
+```json
+{"sessionId":"...","username":"alice","state":"ACTIVE","createdAt":"2026-10-23T17:10:45Z",
+ "lastUsedAt":"2026-10-23T17:12:01Z","expiresAt":"2026-10-24T01:12:01Z","absoluteExpiresAt":"2026-10-24T17:10:45Z"}
+```
+
+A missing, wrong, expired or revoked token gives `401` with `application/problem+json` (`/problems/token-invalid`).
 
 ## How it works
 
@@ -81,7 +125,6 @@ curl -X DELETE -H "Authorization: Bearer asp_..." http://localhost:8080/api/v1/s
   (one session per user) and shutdown. Tokens: `asp_` + 256 random bits, only the SHA-256 hash is stored.
   This protects against accidental logging/serialisation, not against someone dumping the JVM memory.
 - `autosys.environment` must be in `autosys.allowed-environments` (default `DEV, UAT`), or the app refuses to start.
-- Audit events (`LOGIN_CAPTURED`, `LOGIN_FAILED`, `SESSION_CLOSED`) go to the `AUDIT` logger as JSON lines.
 
 ## Known limitations (phase 1)
 

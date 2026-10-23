@@ -1,0 +1,28 @@
+# Copy to ./user.properties (git-ignored) in the directory you start the proxy from.
+# Any property from src/main/resources/application.yml can be overridden here.
+
+# --- AutoSys server (origin only, no path)
+autosys.base-url=https://your-autosys-webui-host:8443
+autosys.environment=DEV
+
+# --- Proxy port
+server.port=8080
+
+# --- TLS trust for AutoSys (internal CA); JVM default trust if omitted
+#autosys.http.truststore=file:/path/to/truststore.p12
+#autosys.http.truststore-password=${TRUSTSTORE_PASSWORD}
+
+# --- Login exchange (see README "Teach the proxy how your AutoSys login looks")
+autosys.webui.login.discovery-log=true
+autosys.webui.login.path=/path/to/login/submit
+autosys.webui.login.username-field=username
+autosys.webui.login.password-field=password
+autosys.webui.login.success.statuses=302
+autosys.webui.login.success.location-reject-pattern=(?i)login|error
+#autosys.webui.login.success.cookie=JSESSIONID
+#autosys.webui.login.failure-marker=Invalid user
+
+# --- Logging
+#logging.file.name=logs/a-proxy.log
+#autosys.proxy.access-log=true
+#logging.level.com.testing.aproxy=DEBUG

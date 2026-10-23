@@ -6,8 +6,8 @@ out/
 .vscode/
 .DS_Store
 # local run configuration may contain real hostnames
-src/main/resources/application-local.yml
-application-local.yml
+user.properties
+logs/
 *.p12
 *.jks
 *.har

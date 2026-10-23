@@ -1,6 +1,6 @@
-# AutoSys proxy configuration. Values marked CHANGE-ME come from observing the AutoSys login exchange.
-# Put real hostnames and settings into application-local.yml (git-ignored) and run with
-# --spring.profiles.active=local.
+# AutoSys proxy defaults. Do not put real hostnames here: override any property in
+# ./user.properties (in the working directory, git-ignored); see user.properties.example.
+# Values marked CHANGE-ME come from observing the AutoSys login exchange.
 server:
   port: 8080
   # Behind a TLS-terminating load balancer use: native or framework
@@ -9,6 +9,10 @@ server:
 spring:
   application:
     name: autosys-proxy
+  config:
+    # Settings in this file take precedence over the defaults below.
+    # Another file can be chosen with --aproxy.user-properties=/path/to/file.properties
+    import: optional:file:${aproxy.user-properties:./user.properties}
   threads:
     virtual:
       enabled: true
@@ -23,6 +27,7 @@ autosys:
     prefix: ""                # "" = AutoSys UI at the proxy root (recommended); e.g. /autosys
     rewrite-body-urls: false  # replace absolute AutoSys URLs in HTML/JS bodies
     preserve-host: true       # send the browser's Host to AutoSys (required by OWASP CSRFGuard)
+    access-log: true          # one log line per request (ACCESS logger)
   session:
     idle-ttl: 8h
     absolute-ttl: 24h
@@ -66,5 +71,9 @@ management:
       access: none
 
 logging:
+  file:
+    name: logs/a-proxy.log    # in addition to the console; rolls at 10MB, keeps 7 days
   level:
     root: INFO
+    # DEBUG shows how requests are routed and forwarded (headers are not logged)
+    com.testing.aproxy: INFO

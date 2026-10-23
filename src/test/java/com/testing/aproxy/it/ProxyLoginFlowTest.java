@@ -134,7 +134,13 @@ class ProxyLoginFlowTest {
         assertThat(browser.get("/proxy/token").body()).contains("No API token");
 
         assertThat(output.getAll()).doesNotContain(PASSWORD).doesNotContain(token).doesNotContain("abc123")
-                .contains("\"event\":\"LOGIN_CAPTURED\"");
+                .contains("\"event\":\"LOGIN_CAPTURED\"")
+                .contains("open " + browser.origin() + "/proxy/token within")
+                // access log: one line per request, query strings omitted
+                .contains("GET /ui/home -> " + autosys.baseUrl() + " 200")
+                .contains("POST /ui/j_login -> " + autosys.baseUrl() + " 302")
+                .contains("GET /proxy/token (proxy) 200")
+                .doesNotContain("next=%2Fui");
     }
 
     @Test

@@ -45,4 +45,6 @@ tasks.withType<JavaCompile> {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+    // never load the developer's ./user.properties into tests
+    systemProperty("aproxy.user-properties", "build/no-user.properties")
 }

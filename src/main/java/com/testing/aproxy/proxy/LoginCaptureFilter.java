@@ -157,8 +157,8 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
             response.setHeader(HttpHeaders.LOCATION, request.getContextPath() + ProxyPaths.TOKEN_PAGE
                     + (next == null ? "" : "?next=" + URLEncoder.encode(next, StandardCharsets.UTF_8)));
         }
-        log.info("AutoSys login captured for user '{}'; API token available at {} for {}", credentials.username(),
-                ProxyPaths.TOKEN_PAGE, tokenPageTtl);
+        log.info("AutoSys login captured for user '{}'; open {}{} within {} to copy the API token",
+                credentials.username(), ProxyPaths.proxyOrigin(request), ProxyPaths.TOKEN_PAGE, tokenPageTtl);
     }
 
     private boolean isLoginRequest(HttpServletRequest request) {

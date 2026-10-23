@@ -43,7 +43,9 @@ public record AutosysProperties(
              * believes it is served under the proxy's name. Needed for OWASP CSRFGuard, which
              * embeds the request host in its JavaScript and checks it against the page domain.
              */
-            @DefaultValue("true") boolean preserveHost) {
+            @DefaultValue("true") boolean preserveHost,
+            /* One INFO line per request on the ACCESS logger. */
+            @DefaultValue("true") boolean accessLog) {
 
         public String normalizedPrefix() {
             String p = prefix.strip();
