@@ -28,6 +28,7 @@ autosys:
     rewrite-body-urls: false  # replace absolute AutoSys URLs in HTML/JS bodies
     preserve-host: true       # send the browser's Host to AutoSys (required by OWASP CSRFGuard)
     access-log: true          # one log line per request (ACCESS logger)
+    start-page:               # e.g. /ui/Login.html: where http://proxy/ sends the browser; empty = forward "/"
   session:
     idle-ttl: 8h
     absolute-ttl: 24h
@@ -54,6 +55,7 @@ autosys:
       failure-marker:               # text in the response body on a bad password
       discovery-log: false          # log the shape (never values) of POSTs to fill in this section
       redirect-to-token-page: true
+      landing-page:                 # e.g. /ui/Home.html: page after login; first visit shows /proxy/token
 
 management:
   endpoints:

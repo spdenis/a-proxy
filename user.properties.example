@@ -12,6 +12,10 @@ server.port=8080
 #autosys.http.truststore=file:/path/to/truststore.p12
 #autosys.http.truststore-password=${TRUSTSTORE_PASSWORD}
 
+# --- Entry pages (AutoSys-relative)
+#autosys.proxy.start-page=/ui/Login.html
+#autosys.webui.login.landing-page=/ui/Home.html
+
 # --- Login exchange (see README "Teach the proxy how your AutoSys login looks")
 autosys.webui.login.discovery-log=true
 autosys.webui.login.path=/path/to/login/submit

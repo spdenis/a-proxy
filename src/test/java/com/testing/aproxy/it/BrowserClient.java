@@ -59,7 +59,12 @@ final class BrowserClient {
         for (String setCookie : setCookies(response)) {
             String pair = setCookie.split(";", 2)[0];
             int eq = pair.indexOf('=');
-            cookies.put(pair.substring(0, eq).strip(), pair.substring(eq + 1).strip());
+            String name = pair.substring(0, eq).strip();
+            if (setCookie.contains("Max-Age=0")) {
+                cookies.remove(name);
+            } else {
+                cookies.put(name, pair.substring(eq + 1).strip());
+            }
         }
         return response;
     }

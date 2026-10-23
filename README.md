@@ -67,13 +67,26 @@ not coded (`autosys.webui.login.*` in `user.properties`):
    - `failure-marker`: text in the body of a failed-login response.
 4. Restart. The startup log should say `Login capture: configured for POST <path>`.
 
+The login **page** and the login **endpoint** are separate settings. Only the endpoint is configured above;
+the page just passes through. Two optional settings cover the pages around the login:
+
+```properties
+autosys.webui.login.path=/authentication/login      # what the login form/JS POSTs to (captured)
+autosys.proxy.start-page=/ui/Login.html             # http://localhost:8080/ redirects here
+autosys.webui.login.landing-page=/ui/Home.html      # page AutoSys shows after login (Ant pattern allowed)
+```
+
+With `landing-page` set, a login that does not end with a redirect (typical for XHR/JSON logins) still shows
+the token. When the UI next opens the landing page, the proxy first sends the browser to `/proxy/token`,
+whose **Continue** link leads back to it. This happens once per login.
+
 Until success rules are configured, logins pass through normally but no token is issued (a warning is logged at startup).
 
 ### Get the API token
 
 1. Open <http://localhost:8080/> and log in on the normal AutoSys page.
-2. If the login ends with a redirect, the browser goes to <http://localhost:8080/proxy/token> on its own.
-   Otherwise open that page yourself. It shows the token (`asp_...`) with a **Copy token** button and a link back to AutoSys.
+2. The browser goes to <http://localhost:8080/proxy/token> on its own if the login ends with a redirect,
+   or if `landing-page` is set. Otherwise open that page yourself. It shows the token (`asp_...`) with a **Copy token** button and a link back to AutoSys.
 3. The page only shows the token for 5 minutes after login (`autosys.session.token-page-ttl`), and only in the
    browser that logged in. To get a new token, log in again. That replaces the previous token.
 

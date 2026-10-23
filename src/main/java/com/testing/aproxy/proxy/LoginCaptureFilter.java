@@ -156,6 +156,9 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
             String next = sameOriginPath(location, request);
             response.setHeader(HttpHeaders.LOCATION, request.getContextPath() + ProxyPaths.TOKEN_PAGE
                     + (next == null ? "" : "?next=" + URLEncoder.encode(next, StandardCharsets.UTF_8)));
+        } else if (login.landingPage() != null) {
+            // e.g. XHR login answered with 200: the UI navigates to the landing page itself; show the token there
+            response.addHeader(HttpHeaders.SET_COOKIE, LandingPageFilter.showTokenCookie(request, paths, tokenPageTtl));
         }
         log.info("AutoSys login captured for user '{}'; open {}{} within {} to copy the API token",
                 credentials.username(), ProxyPaths.proxyOrigin(request), ProxyPaths.TOKEN_PAGE, tokenPageTtl);

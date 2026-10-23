@@ -3,6 +3,7 @@ package com.testing.aproxy.api;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 
+import com.testing.aproxy.config.AutosysProperties;
 import com.testing.aproxy.proxy.ProxyPaths;
 import com.testing.aproxy.session.PendingTokenStore;
 import com.testing.aproxy.session.SessionRegistry;
@@ -28,10 +29,16 @@ public class TokenPageController {
     private final SessionRegistry sessions;
     private final ProxyPaths paths;
 
-    public TokenPageController(PendingTokenStore pendingTokens, SessionRegistry sessions, ProxyPaths paths) {
+    private final String defaultNext;
+
+    public TokenPageController(PendingTokenStore pendingTokens, SessionRegistry sessions, ProxyPaths paths,
+            AutosysProperties properties) {
         this.pendingTokens = pendingTokens;
         this.sessions = sessions;
         this.paths = paths;
+        String landing = properties.webui().login().landingPage();
+        // a pattern cannot be linked to; fall back to the AutoSys root then
+        this.defaultNext = paths.prefix() + (landing != null && !landing.contains("*") ? landing : "/");
     }
 
     @GetMapping(path = ProxyPaths.TOKEN_PAGE, produces = MediaType.TEXT_HTML_VALUE)
@@ -58,7 +65,7 @@ public class TokenPageController {
                 && !ProxyPaths.isOwnPath(next)) {
             return next;
         }
-        return paths.prefix() + "/";
+        return defaultNext;
     }
 
     private String tokenPage(PendingTokenStore.PendingToken pending, String home) {

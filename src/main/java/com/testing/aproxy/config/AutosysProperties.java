@@ -45,7 +45,13 @@ public record AutosysProperties(
              */
             @DefaultValue("true") boolean preserveHost,
             /* One INFO line per request on the ACCESS logger. */
-            @DefaultValue("true") boolean accessLog) {
+            @DefaultValue("true") boolean accessLog,
+            /* AutoSys-relative page that the proxy root redirects to, e.g. /ui/Login.html; empty = forward "/". */
+            @Nullable String startPage) {
+
+        public Proxy {
+            startPage = blankToNull(startPage);
+        }
 
         public String normalizedPrefix() {
             String p = prefix.strip();
@@ -93,10 +99,16 @@ public record AutosysProperties(
             /* Logs the shape (never values) of every POST and its response to help fill in this section. */
             @DefaultValue("false") boolean discoveryLog,
             /* Redirect the browser to /proxy/token after a successful login that ends with a redirect. */
-            @DefaultValue("true") boolean redirectToTokenPage) {
+            @DefaultValue("true") boolean redirectToTokenPage,
+            /*
+             * AutoSys-relative page shown after a successful login, e.g. /ui/Home.html (Ant pattern allowed).
+             * The first visit after a captured login goes to /proxy/token first; its "Continue" link leads here.
+             */
+            @Nullable String landingPage) {
 
         public Login {
             failureMarker = blankToNull(failureMarker);
+            landingPage = blankToNull(landingPage);
         }
     }
 

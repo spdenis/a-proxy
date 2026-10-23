@@ -60,6 +60,8 @@ class PrefixedJsonLoginTest {
         registry.add("autosys.webui.login.success.cookie", () -> "SID");
         registry.add("autosys.webui.login.failure-marker", () -> "\"error\"");
         registry.add("autosys.webui.login.discovery-log", () -> "true");
+        registry.add("autosys.proxy.start-page", () -> "/app/login.html");
+        registry.add("autosys.webui.login.landing-page", () -> "/app/index.html");
     }
 
     @LocalServerPort
@@ -102,10 +104,25 @@ class PrefixedJsonLoginTest {
                 .withHeader("Origin", equalTo(autosys.baseUrl()))
                 .withHeader("Referer", equalTo(autosys.baseUrl() + "/app/index.html")));
 
-        HttpResponse<String> tokenPage = browser.get("/proxy/token");
+        // no redirect after an XHR login: the UI's own navigation to the landing page shows the token first
+        assertThat(BrowserClient.setCookies(login)).anySatisfy(c -> assertThat(c)
+                .startsWith("ASP_SHOW_TOKEN=1").contains("Path=/autosys/"));
+        HttpResponse<String> xhr = browser.get("/autosys/app/index.html", "Accept", "application/json");
+        assertThat(xhr.statusCode()).isEqualTo(200);
+        HttpResponse<String> landing = browser.get("/autosys/app/index.html", "Accept", "text/html,*/*");
+        assertThat(landing.statusCode()).isEqualTo(302);
+        assertThat(landing.headers().firstValue("Location"))
+                .hasValue(browser.origin() + "/proxy/token?next=%2Fautosys%2Fapp%2Findex.html");
+        assertThat(browser.cookies).doesNotContainKey("ASP_SHOW_TOKEN");
+
+        HttpResponse<String> tokenPage = browser.get("/proxy/token?next=%2Fautosys%2Fapp%2Findex.html");
         Matcher m = ProxyLoginFlowTest.TOKEN.matcher(tokenPage.body());
         assertThat(m.find()).isTrue();
-        assertThat(tokenPage.body()).contains("bob", "href=\"/autosys/\"");
+        assertThat(tokenPage.body()).contains("bob", "href=\"/autosys/app/index.html\"");
+        // without next, the link still leads to the landing page
+        assertThat(browser.get("/proxy/token").body()).contains("href=\"/autosys/app/index.html\"");
+        // second visit goes straight to AutoSys
+        assertThat(browser.get("/autosys/app/index.html", "Accept", "text/html").statusCode()).isEqualTo(200);
         assertThat(browser.get("/api/v1/session", "Authorization", "Bearer " + m.group()).body())
                 .contains("\"username\":\"bob\"");
 
@@ -124,6 +141,17 @@ class PrefixedJsonLoginTest {
                 .header("Accept-Encoding", "gzip").build(), HttpResponse.BodyHandlers.ofByteArray());
         assertThat(js.headers().firstValue("Content-Encoding")).hasValue("gzip");
         assertThat(js.body()).isEqualTo(gzip("console.log('hello')"));
+    }
+
+    @Test
+    void proxyRootRedirectsToStartPage() throws Exception {
+        for (String root : new String[] {"/autosys", "/autosys/"}) {
+            HttpResponse<String> response = browser.get(root);
+            assertThat(response.statusCode()).isEqualTo(302);
+            assertThat(response.headers().firstValue("Location").orElseThrow()).endsWith("/autosys/app/login.html");
+        }
+        // without a captured login the landing page is not intercepted
+        assertThat(browser.get("/autosys/app/index.html", "Accept", "text/html").statusCode()).isEqualTo(200);
     }
 
     @Test

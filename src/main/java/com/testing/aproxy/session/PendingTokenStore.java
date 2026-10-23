@@ -24,6 +24,9 @@ public class PendingTokenStore {
 
     public static final String COOKIE = OWN_COOKIE_PREFIX + "TOKEN_TICKET";
 
+    /** Marks a browser that should see the token page on its next visit of the landing page. */
+    public static final String SHOW_COOKIE = OWN_COOKIE_PREFIX + "SHOW_TOKEN";
+
     private final SecureRandom random = new SecureRandom();
     private final Cache<String, PendingToken> pending;
 
