@@ -1,6 +1,7 @@
 package com.testing.aproxy.session;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -18,6 +19,7 @@ public final class ProxySession {
     private final CredentialVault.SealedSecret credentials;
     private final @Nullable String clientIp;
     private final @Nullable LoginTemplate loginTemplate;
+    private final List<String> autosysCookies;
     private final Instant createdAt;
     private final Instant absoluteExpiresAt;
     private final ReentrantLock lock = new ReentrantLock();
@@ -25,12 +27,14 @@ public final class ProxySession {
     private volatile SessionState state = SessionState.ACTIVE;
 
     ProxySession(String username, String tokenHash, CredentialVault.SealedSecret credentials,
-            @Nullable String clientIp, @Nullable LoginTemplate loginTemplate, Instant now, Instant absoluteExpiresAt) {
+            @Nullable String clientIp, @Nullable LoginTemplate loginTemplate, List<String> autosysCookies, Instant now,
+            Instant absoluteExpiresAt) {
         this.username = username;
         this.tokenHash = tokenHash;
         this.credentials = credentials;
         this.clientIp = clientIp;
         this.loginTemplate = loginTemplate;
+        this.autosysCookies = List.copyOf(autosysCookies);
         this.createdAt = now;
         this.lastUsedAt = now;
         this.absoluteExpiresAt = absoluteExpiresAt;
@@ -60,6 +64,14 @@ public final class ProxySession {
     /** How the browser logged in, for the proxy's own AutoSys login; null if not recorded. */
     public @Nullable LoginTemplate loginTemplate() {
         return loginTemplate;
+    }
+
+    /**
+     * {@code Set-Cookie} values AutoSys sent with the browser's successful login (paths as on
+     * AutoSys), so the proxy can use the already authenticated AutoSys session for API calls.
+     */
+    public List<String> autosysCookies() {
+        return autosysCookies;
     }
 
     public Instant createdAt() {

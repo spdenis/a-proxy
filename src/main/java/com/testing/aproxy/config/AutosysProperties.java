@@ -116,6 +116,11 @@ public record AutosysProperties(
             @DefaultValue("goButtonID") String searchButton,
             /* Trinidad partial-page event sent with the search. */
             @DefaultValue("autosub") String searchEvent,
+            /*
+             * Use the AutoSys session of the browser login (its cookies) instead of logging in again;
+             * the proxy logs in itself only when that session does not open Quick View.
+             */
+            @DefaultValue("true") boolean reuseBrowserSession,
             /* Login and Quick View attempts per API call before giving up. */
             @DefaultValue("2") int maxAttempts) {
 

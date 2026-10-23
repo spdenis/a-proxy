@@ -3,6 +3,7 @@ package com.testing.aproxy.session;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -62,15 +63,16 @@ public class SessionRegistry {
      * session of the same user is closed. The caller must wipe {@code password} afterwards.
      */
     public IssuedSession create(String username, char[] password, @Nullable String clientIp) {
-        return create(username, password, clientIp, null);
+        return create(username, password, clientIp, null, List.of());
     }
 
     public IssuedSession create(String username, char[] password, @Nullable String clientIp,
-            @Nullable LoginTemplate loginTemplate) {
+            @Nullable LoginTemplate loginTemplate, List<String> autosysCookies) {
         Instant now = clock.instant();
         String token = tokens.newToken();
         String tokenHash = TokenService.hash(token);
-        ProxySession session = new ProxySession(username, tokenHash, vault.seal(password), clientIp, loginTemplate, now,
+        ProxySession session = new ProxySession(username, tokenHash, vault.seal(password), clientIp, loginTemplate,
+                autosysCookies, now,
                 now.plus(absoluteTtl));
         String previous = tokenHashByUser.put(username, tokenHash);
         sessions.put(tokenHash, session);

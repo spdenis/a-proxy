@@ -64,6 +64,7 @@ autosys:
       search-field: jobNameInput
       search-button: goButtonID
       search-event: autosub
+      reuse-browser-session: true   # use the browser login's AutoSys session; own login only as fallback
       max-attempts: 2               # 2 = log in again once when the AutoSys session has expired
 
   # Record AutoSys UI traffic (secrets masked) to learn its internal endpoints. Development only.

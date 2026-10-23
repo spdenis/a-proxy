@@ -67,16 +67,26 @@ class QuickViewApiTest {
     @BeforeEach
     void setUp() throws Exception {
         browser = new BrowserClient(port);
+        stubAutosys("asid-1");
+    }
+
+    /** Fake AutoSys whose login sets WCC-ASID={@code loginAsid}; Quick View opens only with {@code validAsid}. */
+    static void stubAutosys(String validAsid) throws IOException {
         autosys.resetAll();
         autosys.stubFor(post("/authentication/login")
                 .withHeader("X-Requested-With", equalTo("XMLHttpRequest"))
                 .withRequestBody(matchingJsonPath("$.password", equalTo(PASSWORD)))
-                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
-                        .withHeader("Set-Cookie", "WCC-ASID=asid-1; Path=/; HttpOnly").withBody("{\"ok\":true}")));
+                .inScenario("logins").whenScenarioStateIs(Scenario.STARTED).willSetStateTo("second")
+                .willReturn(loginOk("asid-1")));
+        autosys.stubFor(post("/authentication/login")
+                .withHeader("X-Requested-With", equalTo("XMLHttpRequest"))
+                .withRequestBody(matchingJsonPath("$.password", equalTo(PASSWORD)))
+                .inScenario("logins").whenScenarioStateIs("second")
+                .willReturn(loginOk("asid-2")));
         autosys.stubFor(get("/wcc/quickview/index.jsp").atPriority(9)
                 .willReturn(aResponse().withStatus(302).withHeader("Location", "/ui/Login.html")));
         autosys.stubFor(get("/wcc/quickview/index.jsp").atPriority(1)
-                .withHeader("Cookie", containing("WCC-ASID=asid-1"))
+                .withHeader("Cookie", containing("WCC-ASID=" + validAsid))
                 .willReturn(aResponse().withStatus(302)
                         .withHeader("Location", "/wcc/quickview/pages/main.jsf?AntiXSRFToken=XSRF-1&OWASP-CSRFTOKEN=C-1")
                         .withHeader("Set-Cookie", "JSESSIONID=js-1; Path=/wcc/quickview; HttpOnly")));
@@ -89,6 +99,11 @@ class QuickViewApiTest {
         stubSearch("TEST_FX_LOADER", "job.xml");
         stubSearch("NOPE", "not-found.xml");
         stubSearch("TEST_FX*", "job.xml");
+    }
+
+    static com.github.tomakehurst.wiremock.client.ResponseDefinitionBuilder loginOk(String asid) {
+        return aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                .withHeader("Set-Cookie", "WCC-ASID=" + asid + "; Path=/; HttpOnly").withBody("{\"ok\":true}");
     }
 
     static void stubSearch(String job, String file) throws IOException {
@@ -139,9 +154,10 @@ class QuickViewApiTest {
         autosys.verify(postRequestedFor(urlEqualTo(SEARCH))
                 .withRequestBody(containing("serverCombo_input=0&"))
                 .withRequestBody(containing("source=goButtonID&state=&value=&event=autosub&partial=true")));
-        // browser login + one proxy login
-        autosys.verify(2, postRequestedFor(urlEqualTo("/authentication/login")));
-        assertThat(output.getAll()).contains("BACKEND_LOGIN", "[backend] Quick View opened for 'carol'")
+        // the browser's AutoSys session is used: no second login
+        autosys.verify(1, postRequestedFor(urlEqualTo("/authentication/login")));
+        assertThat(output.getAll()).contains("[backend] Quick View opened for 'carol' with the browser's AutoSys session")
+                .doesNotContain("BACKEND_LOGIN")
                 .doesNotContain(PASSWORD).doesNotContain("XSRF-1").doesNotContain(token);
     }
 
@@ -174,19 +190,38 @@ class QuickViewApiTest {
 
         assertThat(api("/api/v1/jobs/TEST_FX_LOADER", token, 200).at("/status/status").asString())
                 .isEqualTo("SUCCESS");
-        autosys.verify(3, postRequestedFor(urlEqualTo("/authentication/login")));
+        // a fresh Quick View session from the same browser login; still no extra login
+        autosys.verify(1, postRequestedFor(urlEqualTo("/authentication/login")));
         assertThat(output.getAll()).contains("is no longer valid (not a partial-page response (text/html))");
     }
 
     @Test
-    void rejectedBackendLoginIs502() throws Exception {
+    void ownLoginWhenTheBrowserSessionDoesNotOpenQuickView(CapturedOutput output) throws Exception {
+        stubAutosys("asid-2");
+        String token = login();
+
+        assertThat(api("/api/v1/jobs/TEST_FX_LOADER", token, 200).at("/status/status").asString())
+                .isEqualTo("SUCCESS");
+        autosys.verify(2, postRequestedFor(urlEqualTo("/authentication/login")));
+        assertThat(output.getAll())
+                .contains("the browser's AutoSys session of 'carol' did not open Quick View (ended at /ui/Login.html")
+                .contains("BACKEND_LOGIN", "Quick View opened for 'carol' with the proxy's own login");
+    }
+
+    @Test
+    void rejectedOwnLoginIs502AndLogged(CapturedOutput output) throws Exception {
+        stubAutosys("asid-2");
         String token = login();
         autosys.stubFor(post("/authentication/login").atPriority(1)
-                .willReturn(aResponse().withStatus(401).withBody("{\"error\":\"locked\"}")));
+                .willReturn(aResponse().withStatus(403).withHeader("Content-Type", "text/html")
+                        .withBody("<html>CSRF token missing</html>")));
 
         JsonNode problem = api("/api/v1/jobs/TEST_FX_LOADER", token, 502);
         assertThat(problem.at("/type").asString()).isEqualTo("/problems/autosys-login");
-        assertThat(problem.at("/detail").asString()).contains("status 401 not in [200]");
+        assertThat(problem.at("/detail").asString()).contains("status 403 not in [200]");
+        assertThat(output.getAll()).contains("response 403 text/html", "body: <html>CSRF token missing</html>",
+                "sent headers [X-Requested-With, Accept, Origin, Referer")
+                .doesNotContain(PASSWORD);
     }
 
     @Test

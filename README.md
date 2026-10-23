@@ -132,12 +132,14 @@ curl -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/jobs?name=M
  "fetchedAt":"2026-10-23T21:30:00Z"}
 ```
 
-How it works: on the first API call the proxy logs in to AutoSys itself with the captured credentials, replaying the
-browser's login request (same format, extra fields and `X-*` headers; the password comes from the vault). Then it opens
-WCC Quick View (`autosys.webui.quickview.entry-path`), keeps that session's cookies, `AntiXSRFToken`,
+How it works: the proxy uses the AutoSys session of your browser login (the cookies AutoSys set on the login
+response), so there is no second login. Only if that session does not open Quick View (or
+`autosys.webui.quickview.reuse-browser-session=false`) does it log in itself with the captured credentials, replaying
+the browser's login request (same format, extra fields and `X-*` headers; the password comes from the vault); a rejected
+login is logged with the response status, body start and the headers sent. Then it opens WCC Quick View (`autosys.webui.quickview.entry-path`), keeps that session's cookies, `AntiXSRFToken`,
 `conversationContext` and `javax.faces.ViewState`, and submits the job search as the UI does (Trinidad partial-page
-request). When the answer is not a partial-page response (session expired, redirect to login), it logs in again and
-retries once. Calls of one session run one at a time. Times are as Quick View shows them (`Accept-Language: en-US`).
+request). When the answer is not a partial-page response (session expired, redirect to login), it opens Quick View again
+(falling back to its own login) and retries once. Calls of one session run one at a time. Times are as Quick View shows them (`Accept-Language: en-US`).
 
 | Problem type | Status | Meaning |
 |---|---|---|

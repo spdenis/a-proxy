@@ -14,6 +14,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import com.testing.aproxy.audit.AuditLogger;
 import com.testing.aproxy.config.AutosysProperties;
@@ -147,7 +149,7 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
         }
 
         var issued = sessions.create(credentials.username(), credentials.password(), clientIp,
-                credentials.template());
+                credentials.template(), setCookies.stream().map(c -> upstreamCookie(c, paths.prefix())).toList());
         audit.loginCaptured(credentials.username(), issued.session().sessionId(), clientIp);
         String ticket = pendingTokens.put(issued.token(), issued.session());
         response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from(PendingTokenStore.COOKIE, ticket)
@@ -232,6 +234,16 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
             return null;
         }
         return new Credentials(username.strip(), password.toCharArray(), template);
+    }
+
+    /** The response's Set-Cookie has already been rewritten for the browser; restore the AutoSys path. */
+    static String upstreamCookie(String setCookie, String prefix) {
+        if (prefix.isEmpty()) {
+            return setCookie;
+        }
+        return Pattern.compile("(?i)(;\\s*Path=)" + Pattern.quote(prefix) + "(/[^;]*)?")
+                .matcher(setCookie).replaceAll(m -> Matcher.quoteReplacement(
+                        m.group(1) + (m.group(2) == null ? "/" : m.group(2))));
     }
 
     /** {@code X-*} headers the UI adds to its login call (never cookies, auth or forwarding headers). */

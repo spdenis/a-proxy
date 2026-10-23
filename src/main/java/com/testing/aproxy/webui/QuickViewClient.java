@@ -83,6 +83,8 @@ public class QuickViewClient {
 
         final CookieJar cookies = new CookieJar();
         boolean loggedIn;
+        /* false once the browser's AutoSys session did not open Quick View */
+        boolean browserSessionUsable = true;
         HtmlForms.@Nullable Form form;
         @Nullable String pageUrl;
 
@@ -122,14 +124,34 @@ public class QuickViewClient {
         }
     }
 
-    /** Logs in when needed and loads Quick View; leaves {@code state.form} set. */
+    /**
+     * Loads Quick View with the browser's AutoSys session, or after the proxy's own login;
+     * leaves {@code state.form} set.
+     */
     private void open(ProxySession session, State state) {
+        boolean borrowed = false;
+        if (!state.loggedIn && state.browserSessionUsable && quickview.reuseBrowserSession()
+                && !session.autosysCookies().isEmpty()) {
+            state.cookies.store(login.path(), session.autosysCookies());
+            state.loggedIn = true;
+            borrowed = true;
+        }
         if (!state.loggedIn) {
             login(session, state);
         }
         Landing page = get(state, base.resolve(quickview.entryPath()));
-        HtmlForms.Form form = page.exchange().status() == 200 ? HtmlForms.find(page.exchange().body(), quickview.form())
-                : null;
+        HtmlForms.Form form = quickViewForm(page);
+        if (form == null && borrowed) {
+            log.info("[backend] the browser's AutoSys session of '{}' did not open Quick View (ended at {} with "
+                    + "status {}); logging in as the proxy", session.username(), page.uri().getPath(),
+                    page.exchange().status());
+            state.reset();
+            state.browserSessionUsable = false;
+            borrowed = false;
+            login(session, state);
+            page = get(state, base.resolve(quickview.entryPath()));
+            form = quickViewForm(page);
+        }
         if (form == null) {
             state.reset();
             throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-quickview",
@@ -139,8 +161,13 @@ public class QuickViewClient {
         }
         state.form = form;
         state.pageUrl = page.uri().toString();
-        log.info("[backend] Quick View opened for '{}' ({} form fields, cookies {})", session.username(),
-                form.fields().size(), state.cookies.names());
+        log.info("[backend] Quick View opened for '{}' with {} ({} form fields, cookies {})", session.username(),
+                borrowed ? "the browser's AutoSys session" : "the proxy's own login", form.fields().size(),
+                state.cookies.names());
+    }
+
+    private HtmlForms.@Nullable Form quickViewForm(Landing page) {
+        return page.exchange().status() == 200 ? HtmlForms.find(page.exchange().body(), quickview.form()) : null;
     }
 
     private void login(ProxySession session, State state) {
@@ -171,6 +198,10 @@ public class QuickViewClient {
                 response.setCookies(), response.body());
         audit.backendLogin(session.username(), session.sessionId(), result.success(), result.reason());
         if (!result.success()) {
+            log.warn("[backend] AutoSys rejected the proxy's login for '{}': {}; response {} {}, cookies {}, "
+                    + "body: {}; sent headers {}", session.username(), result.reason(), response.status(),
+                    response.contentType(), response.setCookies().stream().map(c -> c.split("=", 2)[0]).toList(),
+                    snippet(response.body()), Arrays.stream(post.getHeaders()).map(Header::getName).toList());
             throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-login",
                     "AutoSys rejected the proxy's login for '" + session.username() + "': " + result.reason());
         }
@@ -300,6 +331,11 @@ public class QuickViewClient {
             throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-unreachable",
                     "AutoSys request failed: " + e.getClass().getSimpleName(), e);
         }
+    }
+
+    private static String snippet(String body) {
+        String s = body.replaceAll("\\s+", " ").strip();
+        return s.length() > 300 ? s.substring(0, 300) + "..." : s;
     }
 
     private String origin() {
