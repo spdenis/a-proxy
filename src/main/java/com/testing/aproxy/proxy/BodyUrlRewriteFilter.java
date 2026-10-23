@@ -51,8 +51,14 @@ public class BodyUrlRewriteFilter extends OncePerRequestFilter {
             if (isText(caching.getContentType()) && caching.getHeader("Content-Encoding") == null) {
                 Charset charset = charset(caching);
                 String body = new String(caching.getContentAsByteArray(), charset);
-                String rewritten = rewrite(body, HeaderRewriter.origin(upstream),
-                        ProxyPaths.proxyOrigin(request) + paths.prefix());
+                String proxyBase = ProxyPaths.proxyOrigin(request) + paths.prefix();
+                String rewritten = rewrite(body, HeaderRewriter.origin(upstream), proxyBase);
+                String proxyOrigin = ProxyPaths.proxyOrigin(request);
+                if (!proxyOrigin.startsWith(upstream.getScheme() + "://")) {
+                    // With preserve-host AutoSys writes the proxy host with its own scheme, e.g. https://localhost:8080
+                    String misScheme = upstream.getScheme() + proxyOrigin.substring(proxyOrigin.indexOf("://"));
+                    rewritten = rewrite(rewritten, misScheme, proxyBase);
+                }
                 if (!rewritten.equals(body)) {
                     caching.resetBuffer();
                     caching.getOutputStream().write(rewritten.getBytes(charset));

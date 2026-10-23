@@ -1,5 +1,6 @@
 package com.testing.aproxy.proxy;
 
+import static org.springframework.cloud.gateway.server.mvc.filter.BeforeFilterFunctions.preserveHostHeader;
 import static org.springframework.cloud.gateway.server.mvc.filter.BeforeFilterFunctions.stripPrefix;
 import static org.springframework.cloud.gateway.server.mvc.filter.BeforeFilterFunctions.uri;
 import static org.springframework.cloud.gateway.server.mvc.handler.GatewayRouterFunctions.route;
@@ -45,20 +46,28 @@ public class ProxyRouteConfig {
         if (prefixSegments > 0) {
             builder = builder.before(stripPrefix(prefixSegments));
         }
+        boolean preserveHost = properties.proxy().preserveHost();
+        if (preserveHost) {
+            builder = builder.before(preserveHostHeader());
+        }
         return builder
-                .before(request -> rewriteRequestHeaders(request, upstream, prefix))
+                .before(request -> rewriteRequestHeaders(request, upstream, prefix, preserveHost))
                 .after((request, response) -> rewriteResponseHeaders(request, response, upstream, prefix))
                 .build();
     }
 
-    static ServerRequest rewriteRequestHeaders(ServerRequest request, URI upstream, String prefix) {
+    static ServerRequest rewriteRequestHeaders(ServerRequest request, URI upstream, String prefix,
+            boolean preserveHost) {
         String proxyOrigin = ProxyPaths.proxyOrigin(request.servletRequest());
         return ServerRequest.from(request)
                 .headers(headers -> {
-                    replace(headers, HttpHeaders.ORIGIN,
-                            HeaderRewriter.toUpstream(headers.getFirst(HttpHeaders.ORIGIN), upstream, proxyOrigin, prefix));
-                    replace(headers, HttpHeaders.REFERER,
-                            HeaderRewriter.toUpstream(headers.getFirst(HttpHeaders.REFERER), upstream, proxyOrigin, prefix));
+                    if (!preserveHost) {
+                        // AutoSys sees its own host name, so browser-side origins must match it.
+                        replace(headers, HttpHeaders.ORIGIN, HeaderRewriter.toUpstream(
+                                headers.getFirst(HttpHeaders.ORIGIN), upstream, proxyOrigin, prefix));
+                        replace(headers, HttpHeaders.REFERER, HeaderRewriter.toUpstream(
+                                headers.getFirst(HttpHeaders.REFERER), upstream, proxyOrigin, prefix));
+                    }
                     List<String> cookies = headers.get(HttpHeaders.COOKIE);
                     if (cookies != null) {
                         replace(headers, HttpHeaders.COOKIE,

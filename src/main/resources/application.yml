@@ -22,6 +22,7 @@ autosys:
   proxy:
     prefix: ""                # "" = AutoSys UI at the proxy root (recommended); e.g. /autosys
     rewrite-body-urls: false  # replace absolute AutoSys URLs in HTML/JS bodies
+    preserve-host: true       # send the browser's Host to AutoSys (required by OWASP CSRFGuard)
   session:
     idle-ttl: 8h
     absolute-ttl: 24h

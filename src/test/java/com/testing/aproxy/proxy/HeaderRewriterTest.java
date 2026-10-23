@@ -27,6 +27,19 @@ class HeaderRewriterTest {
     }
 
     @Test
+    void locationOnProxyHostWithAutosysSchemeIsFixed() {
+        // AutoSys received Host: localhost:8080 but believes it is on https
+        assertThat(HeaderRewriter.rewriteLocation("https://localhost:8080/ui/home", UPSTREAM, PROXY, ""))
+                .isEqualTo("http://localhost:8080/ui/home");
+        assertThat(HeaderRewriter.rewriteLocation("https://localhost:8080/ui/home", UPSTREAM, PROXY, "/autosys"))
+                .isEqualTo("http://localhost:8080/autosys/ui/home");
+        assertThat(HeaderRewriter.rewriteLocation("https://proxy.example/x", UPSTREAM, "http://proxy.example", ""))
+                .isEqualTo("http://proxy.example/x");
+        assertThat(HeaderRewriter.rewriteLocation("https://localhost:9999/x", UPSTREAM, PROXY, ""))
+                .isEqualTo("https://localhost:9999/x");
+    }
+
+    @Test
     void relativeLocationGetsPrefix() {
         assertThat(HeaderRewriter.rewriteLocation("/ui/home", UPSTREAM, PROXY, "/autosys")).isEqualTo("/autosys/ui/home");
         assertThat(HeaderRewriter.rewriteLocation("/ui/home", UPSTREAM, PROXY, "")).isEqualTo("/ui/home");

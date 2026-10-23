@@ -100,11 +100,13 @@ class ProxyLoginFlowTest {
                 .contains("JSESSIONID=abc123; Path=/ui; HttpOnly; SameSite=Lax")
                 .anySatisfy(c -> assertThat(c).startsWith("ASP_TOKEN_TICKET=").contains("Path=/proxy", "HttpOnly"));
 
-        // the login request reached AutoSys unchanged, with Origin/Referer pointing at AutoSys
+        // the login request reached AutoSys unchanged; with preserve-host (default) AutoSys sees the
+        // proxy's Host and the browser's Origin/Referer, as OWASP CSRFGuard requires
         autosys.verify(postRequestedFor(urlEqualTo("/ui/j_login"))
                 .withRequestBody(equalTo("user=alice&pass=" + PASSWORD))
-                .withHeader("Origin", equalTo(autosys.baseUrl()))
-                .withHeader("Referer", equalTo(autosys.baseUrl() + "/ui/login.html")));
+                .withHeader("Host", equalTo("localhost:" + port))
+                .withHeader("Origin", equalTo(browser.origin()))
+                .withHeader("Referer", equalTo(browser.origin() + "/ui/login.html")));
 
         HttpResponse<String> tokenPage = browser.get("/proxy/token?next=%2Fui%2Fhome");
         assertThat(tokenPage.statusCode()).isEqualTo(200);
@@ -133,6 +135,14 @@ class ProxyLoginFlowTest {
 
         assertThat(output.getAll()).doesNotContain(PASSWORD).doesNotContain(token).doesNotContain("abc123")
                 .contains("\"event\":\"LOGIN_CAPTURED\"");
+    }
+
+    @Test
+    void redirectBuiltFromPreservedHostKeepsBrowserOnProxyScheme() throws Exception {
+        autosys.stubFor(get("/ui/logout").willReturn(aResponse().withStatus(302)
+                .withHeader("Location", "https://localhost:" + port + "/ui/login.html")));
+        assertThat(browser.get("/ui/logout").headers().firstValue("Location"))
+                .hasValue(browser.origin() + "/ui/login.html");
     }
 
     @Test

@@ -52,6 +52,7 @@ class PrefixedJsonLoginTest {
         registry.add("autosys.base-url", autosys::baseUrl);
         registry.add("autosys.proxy.prefix", () -> "/autosys");
         registry.add("autosys.proxy.rewrite-body-urls", () -> "true");
+        registry.add("autosys.proxy.preserve-host", () -> "false");
         registry.add("autosys.webui.login.path", () -> "/rest/auth/**");
         registry.add("autosys.webui.login.username-field", () -> "credentials.user");
         registry.add("autosys.webui.login.password-field", () -> "credentials.secret");
@@ -88,14 +89,18 @@ class PrefixedJsonLoginTest {
     @Test
     void jsonLoginUnderPrefixIssuesToken(CapturedOutput output) throws Exception {
         String body = "{\"credentials\":{\"user\":\"bob\",\"secret\":\"" + PASSWORD + "\"}}";
-        HttpResponse<String> login = browser.post("/autosys/rest/auth/login", "application/json", body);
+        HttpResponse<String> login = browser.post("/autosys/rest/auth/login", "application/json", body,
+                "Origin", browser.origin(), "Referer", browser.origin() + "/autosys/app/index.html");
 
         assertThat(login.statusCode()).isEqualTo(200);
         assertThat(login.headers().firstValue("Location")).isEmpty();
         assertThat(BrowserClient.setCookies(login)).contains("SID=s-42; Path=/autosys/; HttpOnly");
         // body URL rewriting also applies to the login response
         assertThat(login.body()).contains("\"home\":\"" + browser.origin() + "/autosys/app\"");
-        autosys.verify(postRequestedFor(urlEqualTo("/rest/auth/login")).withRequestBody(equalToJson(body)));
+        autosys.verify(postRequestedFor(urlEqualTo("/rest/auth/login")).withRequestBody(equalToJson(body))
+                .withHeader("Host", equalTo(URI.create(autosys.baseUrl()).getAuthority()))
+                .withHeader("Origin", equalTo(autosys.baseUrl()))
+                .withHeader("Referer", equalTo(autosys.baseUrl() + "/app/index.html")));
 
         HttpResponse<String> tokenPage = browser.get("/proxy/token");
         Matcher m = ProxyLoginFlowTest.TOKEN.matcher(tokenPage.body());

@@ -37,7 +37,13 @@ public record AutosysProperties(
             /* Path prefix under which AutoSys is exposed; empty means the proxy root. */
             @DefaultValue("") String prefix,
             /* Optional replacement of absolute AutoSys URLs inside text response bodies. */
-            @DefaultValue("false") boolean rewriteBodyUrls) {
+            @DefaultValue("false") boolean rewriteBodyUrls,
+            /*
+             * Forward the browser's Host header (and leave Origin/Referer untouched), so AutoSys
+             * believes it is served under the proxy's name. Needed for OWASP CSRFGuard, which
+             * embeds the request host in its JavaScript and checks it against the page domain.
+             */
+            @DefaultValue("true") boolean preserveHost) {
 
         public String normalizedPrefix() {
             String p = prefix.strip();

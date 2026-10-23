@@ -105,14 +105,14 @@ class SessionRegistryTest {
 
     static AutosysProperties properties(Duration idle, Duration absolute) {
         return new AutosysProperties(URI.create("https://autosys.example.internal"), Set.of("DEV"), "DEV",
-                new AutosysProperties.Proxy("", false),
+                new AutosysProperties.Proxy("", false, true),
                 new AutosysProperties.Session(idle, absolute, Duration.ofMinutes(5)),
                 null, new AutosysProperties.Token(false), null);
     }
 
     static AutosysProperties propertiesWithIpBinding() {
         return new AutosysProperties(URI.create("https://autosys.example.internal"), Set.of("DEV"), "DEV",
-                new AutosysProperties.Proxy("", false),
+                new AutosysProperties.Proxy("", false, true),
                 new AutosysProperties.Session(Duration.ofHours(8), Duration.ofHours(24), Duration.ofMinutes(5)),
                 null, new AutosysProperties.Token(true), null);
     }

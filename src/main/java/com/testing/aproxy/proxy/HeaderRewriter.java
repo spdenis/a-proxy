@@ -17,8 +17,10 @@ public final class HeaderRewriter {
     }
 
     /**
-     * Rewrites a redirect target. Absolute URLs pointing at AutoSys are moved to the proxy
-     * origin; root-relative paths get the proxy prefix. Anything else is left alone.
+     * Rewrites a redirect target. Absolute URLs pointing at AutoSys, or at the proxy host
+     * with AutoSys' scheme (what AutoSys produces when it receives the proxy's Host header),
+     * are moved to the proxy origin; root-relative paths get the proxy prefix. Anything else
+     * is left alone.
      */
     public static String rewriteLocation(String location, URI upstream, String proxyOrigin, String prefix) {
         if (location.startsWith("/") && !location.startsWith("//")) {
@@ -30,7 +32,7 @@ public final class HeaderRewriter {
         } catch (IllegalArgumentException e) {
             return location;
         }
-        if (!target.isAbsolute() || !sameServer(target, upstream)) {
+        if (!target.isAbsolute() || !(sameServer(target, upstream) || isProxyHost(target, proxyOrigin))) {
             return location;
         }
         String rawPath = target.getRawPath() == null || target.getRawPath().isEmpty() ? "/" : target.getRawPath();
@@ -139,6 +141,22 @@ public final class HeaderRewriter {
     private static String attributeName(String attribute) {
         int eq = attribute.indexOf('=');
         return (eq < 0 ? attribute : attribute.substring(0, eq)).strip().toLowerCase(Locale.ROOT);
+    }
+
+    /** Same host and port as the proxy, whatever the scheme (AutoSys assumes its own, e.g. https). */
+    private static boolean isProxyHost(URI target, String proxyOrigin) {
+        URI proxy;
+        try {
+            proxy = URI.create(proxyOrigin);
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+        if (target.getHost() == null || !target.getHost().equalsIgnoreCase(proxy.getHost())) {
+            return false;
+        }
+        int proxyPort = effectivePort(proxy);
+        return target.getPort() == -1 ? effectivePort(target) == proxyPort || proxy.getPort() == -1
+                : target.getPort() == proxyPort;
     }
 
     private static boolean sameServer(URI a, URI b) {

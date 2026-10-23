@@ -65,8 +65,14 @@ curl -X DELETE -H "Authorization: Bearer asp_..." http://localhost:8080/api/v1/s
 
 - The proxy uses Spring Cloud Gateway Server Web MVC. The outbound client never follows redirects, stores cookies
   or decompresses. `Location`/`Content-Location` are rewritten to the proxy origin. `Set-Cookie` loses `Domain`
-  and gets its `Path` prefixed; `Secure` is dropped when the proxy runs on plain HTTP. `Origin`/`Referer` are mapped
-  back to AutoSys, and the proxy's own `ASP_*` cookies are never forwarded.
+  and gets its `Path` prefixed; `Secure` is dropped when the proxy runs on plain HTTP. The proxy's own `ASP_*`
+  cookies are never forwarded.
+- `autosys.proxy.preserve-host: true` (default) forwards the browser's `Host`, `Origin` and `Referer` unchanged,
+  so AutoSys believes it runs under the proxy's name. This is required by OWASP CSRFGuard, which AutoSys uses:
+  without it the UI fails with *"OWASP CSRFGuard JavaScript was included from within an unauthorized domain!"*.
+  Redirects AutoSys then builds with its own scheme (e.g. `https://localhost:8080/...`) are corrected to the
+  proxy's scheme. Set it to `false` only if AutoSys (or a load balancer in front of it) rejects unknown host
+  names; `Origin`/`Referer` are then mapped back to the AutoSys host instead.
 - Serving AutoSys at the proxy root (`prefix: ""`, the default) is recommended. With a prefix, absolute paths
   in AutoSys HTML/JS (e.g. `/wcc/...`) would bypass it.
 - If AutoSys pages embed their own absolute URL (`https://autosys-host:port/...`), enable
