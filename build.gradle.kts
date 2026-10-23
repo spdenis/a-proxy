@@ -48,3 +48,12 @@ tasks.withType<Test> {
     // never load the developer's ./user.properties into tests
     systemProperty("aproxy.user-properties", "build/no-user.properties")
 }
+
+// Summarise a capture run: ./gradlew analyzeCaptures --args="captures/<run> [--only=regex] [--values=N] [--no-values] [--brief]"
+tasks.register<JavaExec>("analyzeCaptures") {
+    group = "autosys"
+    description = "Prints a compact summary of recorded AutoSys UI traffic (newest run under ./captures by default)."
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass = "com.testing.aproxy.capture.CaptureAnalyzer"
+    workingDir = projectDir
+}

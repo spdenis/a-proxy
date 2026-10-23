@@ -150,6 +150,28 @@ Also check by hand: log in from two different browsers. Does the first one get l
 
 Switch capture mode off afterwards; it buffers every response in memory.
 
+### Summarise a capture run
+
+When the capture files cannot leave the network, summarise them as compact text:
+
+```bash
+./gradlew -q analyzeCaptures                                   # newest run under ./captures
+./gradlew -q analyzeCaptures --args="captures/20261023-191740"  # a specific run
+./gradlew -q analyzeCaptures --args="--only=job --values=5"     # only paths matching a regex, more sample values
+./gradlew -q analyzeCaptures --args="--brief"                   # endpoint list only
+./gradlew -q analyzeCaptures --args="--no-values"               # field names and types, no sample values
+```
+
+The summary is printed and saved as `SUMMARY.txt` in the run directory. It has three parts:
+- **TIMELINE:** the order of requests. `!` marks a response that looks like a login page or an expired session.
+- **ENDPOINTS:** one line per method + path, with numeric ids grouped as `{n}`.
+- **DETAILS:** for each endpoint:
+  - where it is called from, query parameters, non-standard headers (e.g. CSRF), cookie names, the request body shape;
+  - redirects and the response shape: JSON field paths with types and up to 3 sample values;
+    for HTML the title, forms, table headers and URLs referenced in the page.
+
+Sample values are cut to 40 characters; check them for job names you do not want to share, or use `--no-values`.
+
 ## How it works
 
 | Path | Served by |
