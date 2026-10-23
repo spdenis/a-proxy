@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Mask secrets in every log message. Must be registered before the Boot defaults. -->
+    <conversionRule conversionWord="msg" class="com.testing.aproxy.logging.MaskingMessageConverter"/>
+    <conversionRule conversionWord="m" class="com.testing.aproxy.logging.MaskingMessageConverter"/>
+    <conversionRule conversionWord="message" class="com.testing.aproxy.logging.MaskingMessageConverter"/>
+
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

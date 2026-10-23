@@ -1,0 +1,69 @@
+# AutoSys proxy configuration. Values marked CHANGE-ME come from observing the AutoSys login exchange.
+# Put real hostnames and settings into application-local.yml (git-ignored) and run with
+# --spring.profiles.active=local.
+server:
+  port: 8080
+  # Behind a TLS-terminating load balancer use: native or framework
+  forward-headers-strategy: none
+
+spring:
+  application:
+    name: autosys-proxy
+  threads:
+    virtual:
+      enabled: true
+  # Spring Cloud Gateway sends no X-Forwarded-*/Forwarded headers to AutoSys unless
+  # spring.cloud.gateway.server.webmvc.trusted-proxies is set.
+
+autosys:
+  base-url: https://autosys-webui.example.internal:8443   # origin only (no path)
+  environment: DEV
+  allowed-environments: [DEV, UAT]
+  proxy:
+    prefix: ""                # "" = AutoSys UI at the proxy root (recommended); e.g. /autosys
+    rewrite-body-urls: false  # replace absolute AutoSys URLs in HTML/JS bodies
+  session:
+    idle-ttl: 8h
+    absolute-ttl: 24h
+    token-page-ttl: 5m
+  http:
+    connect-timeout: 5s
+    read-timeout: 30s
+    max-connections: 50
+    # truststore: file:/path/to/truststore.p12
+    # truststore-password: ${TRUSTSTORE_PASSWORD}
+  token:
+    bind-client-ip: false
+  webui:
+    login:
+      path: /CHANGE-ME/login        # AutoSys-relative path of the login form submit (Ant pattern)
+      method: POST
+      username-field: CHANGE-ME     # form field / JSON property (dotted path allowed)
+      password-field: CHANGE-ME
+      success:                      # all configured rules must hold
+        statuses: []                # e.g. [302]
+        location-pattern:           # regex the redirect target must contain
+        location-reject-pattern:    # regex meaning "back to login with error"
+        cookie:                     # cookie AutoSys sets on success, e.g. JSESSIONID
+      failure-marker:               # text in the response body on a bad password
+      discovery-log: false          # log the shape (never values) of POSTs to fill in this section
+      redirect-to-token-page: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+    heapdump:
+      access: none
+    env:
+      access: none
+    configprops:
+      access: none
+
+logging:
+  level:
+    root: INFO

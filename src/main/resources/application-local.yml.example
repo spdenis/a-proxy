@@ -1,0 +1,18 @@
+# Copy to src/main/resources/application-local.yml (git-ignored) or next to the jar as
+# application-local.yml, then run with --spring.profiles.active=local.
+autosys:
+  base-url: https://your-autosys-webui-host:8443
+  environment: DEV
+  http:
+    truststore: file:/path/to/truststore.p12
+    truststore-password: ${TRUSTSTORE_PASSWORD}
+  webui:
+    login:
+      discovery-log: true   # turn off once the login section below is filled in
+      path: /path/to/login/submit
+      username-field: username
+      password-field: password
+      success:
+        statuses: [302]
+        location-reject-pattern: (?i)login|error
+      failure-marker: Invalid user
