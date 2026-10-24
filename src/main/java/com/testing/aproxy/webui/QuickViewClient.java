@@ -6,6 +6,7 @@ import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -18,6 +19,7 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.testing.aproxy.audit.AuditLogger;
 import com.testing.aproxy.config.AutosysProperties;
 import com.testing.aproxy.proxy.LoginClassifier;
+import com.testing.aproxy.session.BrowserPage;
 import com.testing.aproxy.session.CredentialVault;
 import com.testing.aproxy.session.LoginTemplate;
 import com.testing.aproxy.session.PendingTokenStore;
@@ -86,6 +88,9 @@ public class QuickViewClient {
         boolean loggedIn;
         /* false once the browser's AutoSys session did not open Quick View */
         boolean browserSessionUsable = true;
+        /* the browser's Quick View page in use, and the last one that stopped working */
+        @Nullable BrowserPage usedPage;
+        @Nullable BrowserPage failedPage;
         HtmlForms.@Nullable Form form;
         @Nullable String pageUrl;
 
@@ -94,6 +99,7 @@ public class QuickViewClient {
             loggedIn = false;
             form = null;
             pageUrl = null;
+            usedPage = null;
         }
     }
 
@@ -104,7 +110,7 @@ public class QuickViewClient {
             State state = states.get(session, s -> new State());
             String lastProblem = "no attempt";
             for (int attempt = 1; attempt <= Math.max(1, quickview.maxAttempts()); attempt++) {
-                if (state.form == null) {
+                if (state.form == null && !useBrowserPage(session, state)) {
                     open(session, state);
                 }
                 Exchange response = postSearch(state, jobName);
@@ -114,6 +120,9 @@ public class QuickViewClient {
                     return response.body();
                 }
                 lastProblem = problem;
+                if (state.usedPage != null) {
+                    state.failedPage = state.usedPage;
+                }
                 log.info("[backend] Quick View session of '{}' is no longer valid ({}); logging in again",
                         session.username(), problem);
                 state.reset();
@@ -123,6 +132,34 @@ public class QuickViewClient {
         } finally {
             session.lock().unlock();
         }
+    }
+
+    /**
+     * Takes over the Quick View page the browser has open: its URL tokens, form fields, ViewState
+     * and cookies (with its Quick View JSESSIONID), as sent on its latest search.
+     */
+    private boolean useBrowserPage(ProxySession session, State state) {
+        BrowserPage page = session.quickViewPage();
+        if (!quickview.reuseBrowserPage() || page == null || page == state.failedPage) {
+            return false;
+        }
+        state.reset();
+        Map<String, List<String>> cookies = new LinkedHashMap<>();
+        for (String cookie : page.cookieHeader().split(";")) {
+            String c = cookie.strip();
+            int eq = c.indexOf('=');
+            if (eq > 0) {
+                cookies.computeIfAbsent(c.substring(0, eq), n -> new ArrayList<>()).add(c.substring(eq + 1));
+            }
+        }
+        cookies.forEach(state.cookies::putBrowser);
+        state.form = new HtmlForms.Form(page.action(), page.fields());
+        state.pageUrl = base.resolve(page.action()).toString();
+        state.loggedIn = true;
+        state.usedPage = page;
+        log.info("[backend] using the browser's Quick View page for '{}' (its search at {}, cookies {})",
+                session.username(), page.seenAt(), state.cookies.names());
+        return true;
     }
 
     /**

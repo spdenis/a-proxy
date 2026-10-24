@@ -58,6 +58,8 @@ autosys:
       landing-page:                 # e.g. /ui/Home.html: page after login; first visit shows /proxy/token
     # WCC Quick View, driven by the proxy itself (own AutoSys login per session) to answer /api/v1/jobs
     quickview:
+      page-path: /wcc/quickview/pages/main.jsf
+      reuse-browser-page: true      # API searches go through the Quick View page the browser has open
       entry-path: /wcc/quickview/index.jsp   # redirects to main.jsf with the CSRF tokens
       login-page:                   # optional page fetched before the proxy's own login
       form: jobDetailsForm

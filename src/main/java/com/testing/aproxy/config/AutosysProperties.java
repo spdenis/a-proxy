@@ -106,6 +106,13 @@ public record AutosysProperties(
      * with its own AutoSys session per proxy session. Paths are relative to the base URL.
      */
     public record Quickview(
+            /* The Quick View page that the UI posts its searches to. */
+            @DefaultValue("/wcc/quickview/pages/main.jsf") String pagePath,
+            /*
+             * Send API searches through the Quick View page the browser has open (its tokens, ViewState and
+             * session), as seen on its last search; needs one search in the browser after logging in.
+             */
+            @DefaultValue("true") boolean reuseBrowserPage,
             /* Page that starts a Quick View session; it redirects to the page with the CSRF tokens. */
             @DefaultValue("/wcc/quickview/index.jsp") String entryPath,
             /* Optional page fetched before the backend login (when AutoSys needs its cookies first). */

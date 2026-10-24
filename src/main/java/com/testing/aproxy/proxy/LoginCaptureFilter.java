@@ -6,6 +6,7 @@ import java.net.URLEncoder;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -20,8 +21,10 @@ import java.util.regex.Pattern;
 
 import com.testing.aproxy.audit.AuditLogger;
 import com.testing.aproxy.config.AutosysProperties;
+import com.testing.aproxy.session.BrowserPage;
 import com.testing.aproxy.session.LoginTemplate;
 import com.testing.aproxy.session.PendingTokenStore;
+import com.testing.aproxy.session.ProxySession;
 import com.testing.aproxy.session.SessionRegistry;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -62,6 +65,7 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
     private static final int MAX_JSON_LOGIN_BODY = 64 * 1024;
 
     private final AutosysProperties.Login login;
+    private final AutosysProperties.Quickview quickview;
     private final ProxyPaths paths;
     private final LoginClassifier classifier;
     private final SessionRegistry sessions;
@@ -72,6 +76,7 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
     public LoginCaptureFilter(AutosysProperties properties, ProxyPaths paths, LoginClassifier classifier,
             SessionRegistry sessions, PendingTokenStore pendingTokens, AuditLogger audit) {
         this.login = properties.webui().login();
+        this.quickview = properties.webui().quickview();
         this.paths = paths;
         this.classifier = classifier;
         this.sessions = sessions;
@@ -210,6 +215,7 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
             return;
         }
         sessions.byBrowserKey(key).ifPresentOrElse(session -> {
+            rememberQuickViewPage(request, session, header);
             List<String> added = session.rememberBrowserCookies(header);
             if (!added.isEmpty()) {
                 log.info("[backend] browser of '{}' sends AutoSys cookies {} (new: {}, on {})", session.username(),
@@ -222,6 +228,30 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
                         path);
             }
         });
+    }
+
+    /** A Quick View form submit (search, refresh): keep where it went and what it sent. */
+    private void rememberQuickViewPage(HttpServletRequest request, ProxySession session, String cookieHeader) {
+        if (!quickview.reuseBrowserPage() || !"POST".equalsIgnoreCase(request.getMethod()) || !isForm(request)) {
+            return;
+        }
+        String path = ProxyPaths.pathOf(request).substring(paths.prefix().length());
+        if (!path.equals(quickview.pagePath())
+                || !quickview.form().equals(request.getParameter("org.apache.myfaces.trinidad.faces.FORM"))
+                || request.getParameter("javax.faces.ViewState") == null) {
+            return;
+        }
+        Map<String, String> fields = new LinkedHashMap<>();
+        request.getParameterMap().forEach((name, values) -> fields.put(name, values.length == 0 ? "" : values[0]));
+        String query = request.getQueryString();
+        String strippedCookies = HeaderRewriter.stripOwnCookies(cookieHeader, PendingTokenStore.OWN_COOKIE_PREFIX);
+        boolean first = session.quickViewPage() == null;
+        session.rememberQuickViewPage(new BrowserPage(path + (query == null ? "" : "?" + query), fields,
+                strippedCookies == null ? "" : strippedCookies, Instant.now()));
+        if (first) {
+            log.info("[backend] API calls of '{}' will use the browser's Quick View page ({} fields)",
+                    session.username(), fields.size());
+        }
     }
 
     private final AtomicLong lastNoBrowserKeyLog = new AtomicLong();

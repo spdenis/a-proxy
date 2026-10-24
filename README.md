@@ -132,7 +132,17 @@ curl -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/jobs?name=M
  "fetchedAt":"2026-10-23T21:30:00Z"}
 ```
 
-How it works: the proxy uses the AutoSys session of your browser login, so there is no second login. At login it
+How it works, in order of preference:
+
+1. **The browser's Quick View page.** When you search in Quick View through the proxy, it remembers that request
+   (URL with `AntiXSRFToken`, form fields with `javax.faces.ViewState`, cookies with the Quick View `JSESSIONID`) and
+   sends API searches the same way, changing only the job name. So: log in, open Quick View, search once, then use
+   the API. The API and the browser tab share that page state (`autosys.webui.quickview.reuse-browser-page=false`
+   turns this off).
+2. **A Quick View page of its own** from your browser's AutoSys session, opened via `index.jsp`.
+3. **Its own login** with the captured credentials.
+
+For 2: the proxy uses the AutoSys session of your browser login, so there is no second login. At login it
 gives the browser an `ASP_SID` cookie (never forwarded to AutoSys) and from then on remembers the AutoSys cookies that
 browser sends, including those the UI sets in JavaScript; API calls use them, except `JSESSIONID`
 (`autosys.webui.quickview.exclude-browser-cookies`), so they get their own Quick View page state. Browse AutoSys through

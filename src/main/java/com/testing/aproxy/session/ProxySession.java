@@ -31,6 +31,7 @@ public final class ProxySession {
     private final Instant absoluteExpiresAt;
     private final ReentrantLock lock = new ReentrantLock();
     private volatile @Nullable String browserKeyHash;
+    private volatile @Nullable BrowserPage quickViewPage;
     private volatile Instant lastUsedAt;
     private volatile SessionState state = SessionState.ACTIVE;
 
@@ -113,6 +114,17 @@ public final class ProxySession {
         return added;
     }
 
+    /** The browser's latest Quick View form submit, if any. */
+    public @Nullable BrowserPage quickViewPage() {
+        return quickViewPage;
+    }
+
+    public void rememberQuickViewPage(BrowserPage page) {
+        if (state != SessionState.CLOSED) {
+            quickViewPage = page;
+        }
+    }
+
     public Instant createdAt() {
         return createdAt;
     }
@@ -150,6 +162,7 @@ public final class ProxySession {
         state = SessionState.CLOSED;
         credentials.wipe();
         browserCookies.clear();
+        quickViewPage = null;
     }
 
     @Override
