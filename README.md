@@ -177,6 +177,18 @@ request). When the answer is not a partial-page response (session expired, redir
 
 Set `logging.level.com.testing.aproxy.webui=DEBUG` to see each request the proxy makes to AutoSys (paths only).
 
+## Copilot skill
+
+`.github/skills/autosys-jobs/` is an agent skill for GitHub Copilot: ask Copilot things like "give me the
+dependencies of MY_JOB", "which jobs depend on MY_JOB, also indirectly" or "which jobs in MY_BOX failed", and it
+calls the job API through `autosys.ps1` (PowerShell) and answers from the result.
+
+- Copilot finds it in this repository; to use it from any workspace, copy the folder to `~/.copilot/skills/`.
+- Set the token in the terminal Copilot uses: `$env:AUTOSYS_PROXY_TOKEN = 'asp_...'` (from `/proxy/token`);
+  `AUTOSYS_PROXY_URL` if the proxy is not on `http://localhost:8080`.
+- The script works on its own too: `powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 downstream MY_JOB -Depth 3`.
+  Commands: `job`, `status`, `deps`, `runs`, `jobs`, `search`, `downstream`, `upstream`, `tree`, `session`.
+
 ## Capture mode: record the AutoSys UI's internal requests
 
 The job API has to make the same internal requests the AutoSys UI makes. To find out what those are,
