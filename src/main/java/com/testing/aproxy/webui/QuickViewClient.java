@@ -86,8 +86,6 @@ public class QuickViewClient {
 
         final CookieJar cookies = new CookieJar();
         boolean loggedIn;
-        /* false once the browser's AutoSys session did not open Quick View */
-        boolean browserSessionUsable = true;
         /* the browser's Quick View page in use, and the last one that stopped working */
         @Nullable BrowserPage usedPage;
         @Nullable BrowserPage failedPage;
@@ -177,7 +175,8 @@ public class QuickViewClient {
      */
     private void open(ProxySession session, State state) {
         boolean borrowed = false;
-        if (!state.loggedIn && state.browserSessionUsable && quickview.reuseBrowserSession()) {
+        // tried on every opening: the browser's cookies change as the user moves around the UI
+        if (!state.loggedIn && quickview.reuseBrowserSession()) {
             state.cookies.store(login.path(), session.autosysCookies());
             session.browserCookies().forEach((name, values) -> {
                 if (quickview.excludeBrowserCookies().stream().noneMatch(name::equalsIgnoreCase)) {
@@ -204,7 +203,6 @@ public class QuickViewClient {
                     page.uri().getPath(), page.exchange().status(), state.cookies.names(),
                     snippet(page.exchange().body()));
             state.reset();
-            state.browserSessionUsable = false;
             borrowed = false;
             login(session, state);
             page = get(state, base.resolve(quickview.entryPath()));
