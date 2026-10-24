@@ -228,6 +228,40 @@ class QuickViewApiTest {
     }
 
     @Test
+    void usesTheQuickViewPageTheBrowserHasLoaded(CapturedOutput output) throws Exception {
+        autosys.stubFor(get(urlPathEqualTo("/wcc/quickview/pages/main.jsf")).atPriority(1)
+                .withHeader("Cookie", containing("JSESSIONID=js-browser"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/html;charset=UTF-8")
+                        .withHeader("Set-Cookie", "wccQv=qv-1; Path=/wcc/quickview")
+                        .withBody(resource("main.html"))));
+        autosys.stubFor(post(urlEqualTo(SEARCH)).atPriority(1).withHeader("Cookie", containing("JSESSIONID=js-browser"))
+                .withRequestBody(containing("jobNameInput=TEST_FX_LOADER&"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/xml;charset=utf-8")
+                        .withBody(resource("job.xml"))));
+        autosys.stubFor(get(urlPathEqualTo("/wcc/quickview/index.jsp")).atPriority(1)
+                .willReturn(aResponse().withStatus(403).withBody("error 403")));
+        String token = login();
+        browser.cookies.put("WCC-ASID", "asid-js");
+        browser.cookies.put("JSESSIONID", "js-browser");
+
+        // the user only opens Quick View, without searching
+        HttpResponse<String> page = browser.get("/wcc/quickview/pages/main.jsf?AntiXSRFToken=XSRF-1&OWASP-CSRFTOKEN=C-1");
+        assertThat(page.statusCode()).isEqualTo(200);
+        assertThat(page.body()).contains("jobDetailsForm");
+
+        assertThat(api("/api/v1/jobs/TEST_FX_LOADER", token, 200).at("/status/status").asString())
+                .isEqualTo("SUCCESS");
+        autosys.verify(postRequestedFor(urlEqualTo(SEARCH))
+                .withHeader("Cookie", equalTo("WCC-ASID=asid-js; JSESSIONID=js-browser; wccQv=qv-1"))
+                .withRequestBody(containing("javax.faces.ViewState=%21VS-1"))
+                .withRequestBody(containing("org.apache.myfaces.trinidad.faces.FORM=jobDetailsForm")));
+        autosys.verify(0, com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor(
+                urlPathEqualTo("/wcc/quickview/index.jsp")));
+        assertThat(output.getAll()).contains("API calls of 'carol' will use the Quick View page the browser opened")
+                .doesNotContain("XSRF-1").doesNotContain("js-browser");
+    }
+
+    @Test
     void usesCookiesTheUiSetInJavaScript(CapturedOutput output) throws Exception {
         autosys.stubFor(post("/authentication/login").atPriority(1)
                 .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")

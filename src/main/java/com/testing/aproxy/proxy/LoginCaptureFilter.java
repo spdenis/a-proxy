@@ -1,5 +1,6 @@
 package com.testing.aproxy.proxy;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -18,6 +19,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.zip.GZIPInputStream;
 
 import com.testing.aproxy.audit.AuditLogger;
 import com.testing.aproxy.config.AutosysProperties;
@@ -26,6 +28,7 @@ import com.testing.aproxy.session.LoginTemplate;
 import com.testing.aproxy.session.PendingTokenStore;
 import com.testing.aproxy.session.ProxySession;
 import com.testing.aproxy.session.SessionRegistry;
+import com.testing.aproxy.webui.HtmlForms;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -99,7 +102,17 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
         if (!isLoginRequest(request)) {
-            rememberBrowserCookies(request);
+            ProxySession linked = rememberBrowserCookies(request);
+            if (linked != null && isQuickViewPageLoad(request)) {
+                ContentCachingResponseWrapper caching = new ContentCachingResponseWrapper(response);
+                try {
+                    chain.doFilter(request, caching);
+                    rememberLoadedQuickViewPage(request, caching, linked);
+                } finally {
+                    caching.copyBodyToResponse();
+                }
+                return;
+            }
             if (login.discoveryLog() && "POST".equalsIgnoreCase(request.getMethod())) {
                 // Field names only; any body read here is replayed to the proxy.
                 LoginRequestWrapper wrapped = wrapForInspection(request);
@@ -196,7 +209,7 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
      * The UI sets some AutoSys cookies in JavaScript (not on the login response); the proxy's own
      * Quick View requests need them, so remember what the browser of a session sends.
      */
-    private void rememberBrowserCookies(HttpServletRequest request) {
+    private @Nullable ProxySession rememberBrowserCookies(HttpServletRequest request) {
         // raw headers: the container's cookie parser may drop cookies whose values it considers invalid
         String header = String.join("; ", Collections.list(request.getHeaders(HttpHeaders.COOKIE)));
         String key = null;
@@ -212,22 +225,103 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
                 log.info("[backend] a browser sends AutoSys cookies but no {} cookie (on {}); log in again through "
                         + "the proxy to link it to an API session", PendingTokenStore.BROWSER_COOKIE, path);
             }
-            return;
+            return null;
         }
-        sessions.byBrowserKey(key).ifPresentOrElse(session -> {
-            rememberQuickViewPage(request, session, header);
-            List<String> added = session.rememberBrowserCookies(header);
-            if (!added.isEmpty()) {
-                log.info("[backend] browser of '{}' sends AutoSys cookies {} (new: {}, on {})", session.username(),
-                        session.browserCookies().keySet(), added, path);
-            }
-        }, () -> {
+        ProxySession session = sessions.byBrowserKey(key).orElse(null);
+        if (session == null) {
             if (quietFor(lastUnknownBrowserKeyLog)) {
                 log.info("[backend] the browser's {} cookie belongs to no active session (proxy restarted or a newer "
                         + "login replaced it) on {}; log in again through the proxy", PendingTokenStore.BROWSER_COOKIE,
                         path);
             }
-        });
+            return null;
+        }
+        rememberQuickViewPage(request, session, header);
+        List<String> added = session.rememberBrowserCookies(header);
+        if (!added.isEmpty()) {
+            log.info("[backend] browser of '{}' sends AutoSys cookies {} (new: {}, on {})", session.username(),
+                    session.browserCookies().keySet(), added, path);
+        }
+        return session;
+    }
+
+    /** The browser loads the Quick View page itself (GET main.jsf, e.g. after index.jsp redirected it). */
+    private boolean isQuickViewPageLoad(HttpServletRequest request) {
+        return quickview.reuseBrowserPage() && "GET".equalsIgnoreCase(request.getMethod())
+                && quickViewPath(request).equals(quickview.pagePath());
+    }
+
+    /**
+     * A Quick View page the browser has just loaded: its search form (action with the CSRF
+     * token, fields, ViewState) and the browser's cookies, so API calls work before the
+     * browser has searched for anything.
+     */
+    private void rememberLoadedQuickViewPage(HttpServletRequest request, ContentCachingResponseWrapper response,
+            ProxySession session) {
+        String type = response.getContentType();
+        String encoding = response.getHeader(HttpHeaders.CONTENT_ENCODING);
+        byte[] body = response.getContentAsByteArray();
+        String reason = response.getStatus() != 200 ? "status " + response.getStatus()
+                : type == null || !type.toLowerCase(Locale.ROOT).contains("html") ? "content type " + type
+                : encoding != null && !encoding.equalsIgnoreCase("gzip") && !encoding.equalsIgnoreCase("identity")
+                        ? "content encoding " + encoding
+                : null;
+        HtmlForms.Form form = null;
+        if (reason == null) {
+            try {
+                if ("gzip".equalsIgnoreCase(encoding)) {
+                    body = new GZIPInputStream(new ByteArrayInputStream(body)).readAllBytes();
+                }
+                form = HtmlForms.find(new String(body, charsetOf(response)), quickview.form());
+            } catch (IOException e) {
+                reason = "unreadable body (" + e.getMessage() + ")";
+            }
+            reason = reason != null ? reason
+                    : form == null ? "no form '" + quickview.form() + "' in the page"
+                    : !form.fields().containsKey("javax.faces.ViewState") ? "no javax.faces.ViewState field"
+                    : form.action().isBlank() ? "the form has no action"
+                    : null;
+        }
+        if (reason != null || form == null) {
+            log.info("[backend] Quick View page loaded by '{}' not used for API calls: {}", session.username(), reason);
+            return;
+        }
+        String header = String.join("; ", Collections.list(request.getHeaders(HttpHeaders.COOKIE)));
+        String cookies = withSetCookies(HeaderRewriter.stripOwnCookies(header, PendingTokenStore.OWN_COOKIE_PREFIX),
+                response.getHeaders(HttpHeaders.SET_COOKIE));
+        boolean first = session.quickViewPage() == null;
+        session.rememberQuickViewPage(new BrowserPage(form.action(), form.fields(), cookies, Instant.now()));
+        log.info("[backend] API calls of '{}' will use the Quick View page the browser {}opened ({} fields)",
+                session.username(), first ? "" : "re", form.fields().size());
+    }
+
+    /** A Cookie header as the browser will send it next: cookies the response sets replace same-name ones. */
+    static String withSetCookies(@Nullable String cookieHeader, Collection<String> setCookies) {
+        List<String> cookies = new ArrayList<>();
+        if (cookieHeader != null) {
+            for (String c : cookieHeader.split(";")) {
+                if (!c.isBlank()) {
+                    cookies.add(c.strip());
+                }
+            }
+        }
+        for (String setCookie : setCookies) {
+            String pair = setCookie.split(";", 2)[0].strip();
+            int eq = pair.indexOf('=');
+            if (eq > 0) {
+                String name = pair.substring(0, eq);
+                cookies.removeIf(c -> c.startsWith(name + "="));
+                if (!pair.substring(eq + 1).isEmpty() && !setCookie.toLowerCase(Locale.ROOT).contains("max-age=0")) {
+                    cookies.add(pair);
+                }
+            }
+        }
+        return String.join("; ", cookies);
+    }
+
+    /** AutoSys-relative path without {@code ;jsessionid=...} path parameters. */
+    private String quickViewPath(HttpServletRequest request) {
+        return ProxyPaths.pathOf(request).substring(paths.prefix().length()).split(";", 2)[0];
     }
 
     /** A Quick View form submit (search, refresh): keep where it went and what it sent. */
@@ -235,8 +329,7 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
         if (!quickview.reuseBrowserPage() || !"POST".equalsIgnoreCase(request.getMethod())) {
             return;
         }
-        // ;jsessionid=... path parameters are not part of the page path
-        String path = ProxyPaths.pathOf(request).substring(paths.prefix().length()).split(";", 2)[0];
+        String path = quickViewPath(request);
         if (!path.startsWith(quickview.pagePath().substring(0, quickview.pagePath().lastIndexOf('/') + 1))) {
             return;
         }

@@ -9,7 +9,7 @@ import java.util.regex.Pattern;
 import org.jspecify.annotations.Nullable;
 
 /** Reads an HTML form (action and the fields a browser would submit) from a page or a partial-page response. */
-final class HtmlForms {
+public final class HtmlForms {
 
     private static final Pattern FORM = Pattern.compile("(?is)<form\\b([^>]*)>(.*?)</form>");
     private static final Pattern FIELD = Pattern.compile(
@@ -20,11 +20,11 @@ final class HtmlForms {
     }
 
     /** @param action as written in the page (entities decoded), e.g. {@code /wcc/quickview/pages/main.jsf?AntiXSRFToken=...} */
-    record Form(String action, Map<String, String> fields) {
+    public record Form(String action, Map<String, String> fields) {
     }
 
     /** The form whose id or name is {@code idOrName}; null when the markup has none. */
-    static @Nullable Form find(String markup, String idOrName) {
+    public static @Nullable Form find(String markup, String idOrName) {
         String source = markup.replace("<![CDATA[", "").replace("]]>", "");
         Matcher m = FORM.matcher(source);
         while (m.find()) {

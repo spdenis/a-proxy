@@ -134,10 +134,10 @@ curl -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/jobs?name=M
 
 How it works, in order of preference:
 
-1. **The browser's Quick View page.** When you search in Quick View through the proxy, it remembers that request
-   (URL with `AntiXSRFToken`, form fields with `javax.faces.ViewState`, cookies with the Quick View `JSESSIONID`) and
-   sends API searches the same way, changing only the job name. So: log in, open Quick View, search once, then use
-   the API. The API and the browser tab share that page state (`autosys.webui.quickview.reuse-browser-page=false`
+1. **The browser's Quick View page.** When the browser loads Quick View (`main.jsf`) or searches in it through the
+   proxy, the proxy remembers the page's search form (URL with `AntiXSRFToken`, form fields with
+   `javax.faces.ViewState`) and the browser's cookies (with the Quick View `JSESSIONID`), and sends API searches the
+   same way, changing only the job name. So: log in, open Quick View, then use the API. The API and the browser tab share that page state (`autosys.webui.quickview.reuse-browser-page=false`
    turns this off).
 2. **A Quick View page of its own** from your browser's AutoSys session, opened via `index.jsp`.
 3. **Its own login** with the captured credentials.

@@ -145,8 +145,8 @@ public class QuickViewClient {
         }
         if (page == null || page == state.failedPage) {
             log.info("[backend] {} for '{}'; opening Quick View via {}", page == null
-                    ? "no Quick View search seen from the browser yet (search once in Quick View through the proxy)"
-                    : "the browser's Quick View page no longer works (search again in Quick View to refresh it)",
+                    ? "no Quick View page seen from the browser yet (open Quick View through the proxy)"
+                    : "the browser's Quick View page no longer works (reload Quick View to refresh it)",
                     session.username(), quickview.entryPath());
             return false;
         }
@@ -164,7 +164,7 @@ public class QuickViewClient {
         state.pageUrl = base.resolve(page.action()).toString();
         state.loggedIn = true;
         state.usedPage = page;
-        log.info("[backend] using the browser's Quick View page for '{}' (its search at {}, cookies {})",
+        log.info("[backend] using the browser's Quick View page for '{}' (seen at {}, cookies {})",
                 session.username(), page.seenAt(), state.cookies.names());
         return true;
     }
@@ -214,9 +214,15 @@ public class QuickViewClient {
                     page.exchange().contentType(), state.cookies.names(), snippet(page.exchange().body()));
             state.reset();
             throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-quickview",
-                    "Quick View did not open after login (ended at " + page.uri().getPath() + " with status "
-                            + page.exchange().status() + ", no form '" + quickview.form() + "'); check "
-                            + "autosys.webui.quickview.entry-path and the login settings");
+                    (quickview.reuseBrowserPage()
+                            ? (session.quickViewPage() == null
+                                    ? "No Quick View page seen from your browser: open Quick View through the proxy, "
+                                            + "then retry. "
+                                    : "Your browser's Quick View page no longer works: reload Quick View, then "
+                                            + "retry. ")
+                            : "")
+                            + "(Opening Quick View separately ended at " + page.uri().getPath() + " with status "
+                            + page.exchange().status() + ")");
         }
         state.form = form;
         state.pageUrl = page.uri().toString();
