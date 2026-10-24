@@ -232,13 +232,23 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
 
     /** A Quick View form submit (search, refresh): keep where it went and what it sent. */
     private void rememberQuickViewPage(HttpServletRequest request, ProxySession session, String cookieHeader) {
-        if (!quickview.reuseBrowserPage() || !"POST".equalsIgnoreCase(request.getMethod()) || !isForm(request)) {
+        if (!quickview.reuseBrowserPage() || !"POST".equalsIgnoreCase(request.getMethod())) {
             return;
         }
-        String path = ProxyPaths.pathOf(request).substring(paths.prefix().length());
-        if (!path.equals(quickview.pagePath())
-                || !quickview.form().equals(request.getParameter("org.apache.myfaces.trinidad.faces.FORM"))
-                || request.getParameter("javax.faces.ViewState") == null) {
+        // ;jsessionid=... path parameters are not part of the page path
+        String path = ProxyPaths.pathOf(request).substring(paths.prefix().length()).split(";", 2)[0];
+        if (!path.startsWith(quickview.pagePath().substring(0, quickview.pagePath().lastIndexOf('/') + 1))) {
+            return;
+        }
+        String form = isForm(request) ? request.getParameter("org.apache.myfaces.trinidad.faces.FORM") : null;
+        String reason = !isForm(request) ? "content type " + request.getContentType()
+                : !path.equals(quickview.pagePath()) ? "path is not " + quickview.pagePath()
+                : !quickview.form().equals(form) ? "form is " + form + ", not " + quickview.form()
+                : request.getParameter("javax.faces.ViewState") == null ? "no javax.faces.ViewState field"
+                : null;
+        if (reason != null) {
+            log.info("[backend] Quick View POST {} of '{}' not used for API calls: {}", path, session.username(),
+                    reason);
             return;
         }
         Map<String, String> fields = new LinkedHashMap<>();

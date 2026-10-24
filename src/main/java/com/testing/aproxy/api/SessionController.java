@@ -7,6 +7,7 @@ import com.testing.aproxy.session.ProxySession;
 import com.testing.aproxy.session.SessionRegistry;
 import com.testing.aproxy.session.SessionState;
 
+import org.jspecify.annotations.Nullable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -28,7 +29,8 @@ public class SessionController {
     public SessionInfo current(@AuthenticationPrincipal ProxySession session) {
         return new SessionInfo(session.sessionId(), session.username(), session.state(), session.createdAt(),
                 session.lastUsedAt(), sessions.idleExpiresAt(session), session.absoluteExpiresAt(),
-                List.copyOf(session.browserCookies().keySet()));
+                List.copyOf(session.browserCookies().keySet()),
+                session.quickViewPage() == null ? null : session.quickViewPage().seenAt());
     }
 
     /** Revokes the token and wipes the captured credentials. */
@@ -41,6 +43,8 @@ public class SessionController {
     public record SessionInfo(String sessionId, String username, SessionState state, Instant createdAt,
             Instant lastUsedAt, Instant expiresAt, Instant absoluteExpiresAt,
             /* names only: AutoSys cookies the browser of this session sent through the proxy */
-            List<String> browserCookies) {
+            List<String> browserCookies,
+            /* when the browser last searched in Quick View through the proxy; null = never */
+            @Nullable Instant quickViewSearchSeenAt) {
     }
 }

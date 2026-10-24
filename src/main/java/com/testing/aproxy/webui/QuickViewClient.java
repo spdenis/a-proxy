@@ -140,7 +140,14 @@ public class QuickViewClient {
      */
     private boolean useBrowserPage(ProxySession session, State state) {
         BrowserPage page = session.quickViewPage();
-        if (!quickview.reuseBrowserPage() || page == null || page == state.failedPage) {
+        if (!quickview.reuseBrowserPage()) {
+            return false;
+        }
+        if (page == null || page == state.failedPage) {
+            log.info("[backend] {} for '{}'; opening Quick View via {}", page == null
+                    ? "no Quick View search seen from the browser yet (search once in Quick View through the proxy)"
+                    : "the browser's Quick View page no longer works (search again in Quick View to refresh it)",
+                    session.username(), quickview.entryPath());
             return false;
         }
         state.reset();
