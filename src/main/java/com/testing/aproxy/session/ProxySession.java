@@ -37,6 +37,7 @@ public final class ProxySession {
     private volatile @Nullable String browserKeyHash;
     private volatile @Nullable BrowserPage quickViewPage;
     private volatile @Nullable String browserUserAgent;
+    private volatile @Nullable String xsrfToken;
     private volatile Instant lastUsedAt;
     private volatile SessionState state = SessionState.ACTIVE;
 
@@ -141,6 +142,20 @@ public final class ProxySession {
         }
     }
 
+    /** The UI's AntiXSRFToken as the browser last sent it; needed to open Quick View. Never logged. */
+    public @Nullable String xsrfToken() {
+        return xsrfToken;
+    }
+
+    /** @return true when the token is new or has changed */
+    public boolean rememberXsrfToken(String token) {
+        if (state == SessionState.CLOSED || token.equals(xsrfToken)) {
+            return false;
+        }
+        xsrfToken = token;
+        return true;
+    }
+
     /** Notes a browser request ("METHOD path", no query) for diagnostics; keeps the latest 20. */
     public void noteRequest(String request) {
         synchronized (recentRequests) {
@@ -195,6 +210,7 @@ public final class ProxySession {
         credentials.wipe();
         browserCookies.clear();
         quickViewPage = null;
+        xsrfToken = null;
         synchronized (recentRequests) {
             recentRequests.clear();
         }

@@ -69,6 +69,8 @@ autosys:
       reuse-browser-session: true   # use the browser's AutoSys session (its cookies); own login only as fallback
       exclude-browser-cookies: [JSESSIONID]   # not reused: API calls get their own Quick View page state
       max-attempts: 2               # 2 = log in again once when the AutoSys session has expired
+      xsrf-param: AntiXSRFToken     # launcher token for index.jsp, taken from the browser's requests
+      entry-referer: /wcc/ui/Launcher.html
 
   # Record AutoSys UI traffic (secrets masked) to learn its internal endpoints. Development only.
   capture:

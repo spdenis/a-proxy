@@ -268,6 +268,30 @@ class QuickViewApiTest {
     }
 
     @Test
+    void opensQuickViewWithTheLaunchersToken(CapturedOutput output) throws Exception {
+        autosys.stubFor(get(urlPathEqualTo("/wcc/quickview/index.jsp")).atPriority(1)
+                .willReturn(aResponse().withStatus(403).withBody("error 403")));
+        autosys.stubFor(get(urlPathEqualTo("/wcc/quickview/index.jsp")).atPriority(1)
+                .withQueryParam("AntiXSRFToken", equalTo("L-1+/="))
+                .withQueryParam("randomId", com.github.tomakehurst.wiremock.client.WireMock.matching("[0-9]+"))
+                .withHeader("Referer", containing("/wcc/ui/Launcher.html"))
+                .withHeader("Cookie", containing("WCC-ASID=asid-1"))
+                .willReturn(aResponse().withStatus(302)
+                        .withHeader("Location", "/wcc/quickview/pages/main.jsf?AntiXSRFToken=XSRF-1&OWASP-CSRFTOKEN=C-1")
+                        .withHeader("Set-Cookie", "JSESSIONID=js-1; Path=/wcc/quickview; HttpOnly")));
+        String token = login();
+        assertThat(api("/api/v1/jobs/TEST_FX_LOADER", token, 502).at("/type").asString()).endsWith("autosys-quickview");
+
+        // the launcher passes its token on some request the browser makes (here a query parameter)
+        browser.get("/ui/Login.html?AntiXSRFToken=L-1%2B%2F%3D");
+        assertThat(api("/api/v1/jobs/TEST_FX_LOADER", token, 200).at("/status/status").asString())
+                .isEqualTo("SUCCESS");
+        assertThat(output.getAll()).contains("no AntiXSRFToken seen from the browser of 'carol' yet")
+                .contains("browser of 'carol' sends AntiXSRFToken (query of GET /ui/Login.html)")
+                .doesNotContain("L-1");
+    }
+
+    @Test
     void usesCookiesTheUiSetInJavaScript(CapturedOutput output) throws Exception {
         autosys.stubFor(post("/authentication/login").atPriority(1)
                 .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")

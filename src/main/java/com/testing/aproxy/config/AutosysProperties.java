@@ -134,7 +134,14 @@ public record AutosysProperties(
              */
             @DefaultValue("JSESSIONID") List<String> excludeBrowserCookies,
             /* Login and Quick View attempts per API call before giving up. */
-            @DefaultValue("2") int maxAttempts) {
+            @DefaultValue("2") int maxAttempts,
+            /*
+             * Token the UI's launcher passes to the entry page (with a randomId); the proxy takes it from
+             * the browser's requests and opens Quick View with it.
+             */
+            @DefaultValue("AntiXSRFToken") String xsrfParam,
+            /* Referer of the entry page request, as when the launcher opens Quick View. */
+            @DefaultValue("/wcc/ui/Launcher.html") String entryReferer) {
 
         public Quickview {
             loginPage = blankToNull(loginPage);

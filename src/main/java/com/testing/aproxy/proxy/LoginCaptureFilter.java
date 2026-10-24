@@ -3,6 +3,7 @@ package com.testing.aproxy.proxy;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.URI;
+import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -249,6 +250,7 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
             return null;
         }
         session.rememberBrowserUserAgent(request.getHeader(HttpHeaders.USER_AGENT));
+        rememberXsrfToken(request, session);
         rememberQuickViewPage(request, session, header);
         List<String> added = session.rememberBrowserCookies(header);
         if (!added.isEmpty()) {
@@ -256,6 +258,44 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
                     session.browserCookies().keySet(), added, path);
         }
         return session;
+    }
+
+    /**
+     * The launcher's AntiXSRFToken, from the query or a header of a browser request; not from
+     * Quick View's own pages, whose URLs carry the page's token.
+     */
+    private void rememberXsrfToken(HttpServletRequest request, ProxySession session) {
+        String pagesDir = quickview.pagePath().substring(0, quickview.pagePath().lastIndexOf('/') + 1);
+        if (quickViewPath(request).startsWith(pagesDir)) {
+            return;
+        }
+        String name = quickview.xsrfParam();
+        String token = null;
+        String where = null;
+        String query = request.getQueryString();
+        if (query != null) {
+            for (String pair : query.split("&")) {
+                String[] kv = pair.split("=", 2);
+                if (kv.length == 2 && !kv[1].isEmpty() && URLDecoder.decode(kv[0], StandardCharsets.UTF_8).equals(name)) {
+                    token = URLDecoder.decode(kv[1], StandardCharsets.UTF_8);
+                    where = "query";
+                }
+            }
+        }
+        if (token == null) {
+            for (String header : Collections.list(request.getHeaderNames())) {
+                String value = request.getHeader(header);
+                if ((header.equalsIgnoreCase(name) || header.equalsIgnoreCase("X-" + name)) && value != null
+                        && !value.isBlank()) {
+                    token = value.strip();
+                    where = "header " + header;
+                }
+            }
+        }
+        if (token != null && session.rememberXsrfToken(token)) {
+            log.info("[backend] browser of '{}' sends {} ({} of {} {}); API calls open Quick View with it",
+                    session.username(), name, where, request.getMethod(), quickViewPath(request));
+        }
     }
 
     private boolean isQuickViewEntry(HttpServletRequest request) {

@@ -11,6 +11,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -195,7 +196,7 @@ public class QuickViewClient {
         if (!state.loggedIn) {
             login(session, state);
         }
-        Landing page = get(state, base.resolve(quickview.entryPath()));
+        Landing page = get(state, entryUri(session), base.resolve(quickview.entryReferer()).toString());
         HtmlForms.Form form = quickViewForm(page);
         if (form == null && borrowed) {
             log.info("[backend] the browser's AutoSys session of '{}' did not open Quick View (ended at {} with "
@@ -205,7 +206,7 @@ public class QuickViewClient {
             state.reset();
             borrowed = false;
             login(session, state);
-            page = get(state, base.resolve(quickview.entryPath()));
+            page = get(state, entryUri(session), base.resolve(quickview.entryReferer()).toString());
             form = quickViewForm(page);
         }
         if (form == null) {
@@ -348,11 +349,34 @@ public class QuickViewClient {
     }
 
     /** GET that follows same-host redirects, as the browser would. */
+    /**
+     * The entry page as the UI's launcher opens it: {@code index.jsp?randomId=..&AntiXSRFToken=..}
+     * with the token the browser sent; without one AutoSys answers 403.
+     */
+    private URI entryUri(ProxySession session) {
+        String token = session.xsrfToken();
+        if (token == null) {
+            log.info("[backend] no {} seen from the browser of '{}' yet; opening Quick View without it",
+                    quickview.xsrfParam(), session.username());
+            return base.resolve(quickview.entryPath());
+        }
+        return base.resolve(quickview.entryPath() + "?randomId=" + ThreadLocalRandom.current().nextLong(1L << 52)
+                + "&" + URLEncoder.encode(quickview.xsrfParam(), StandardCharsets.UTF_8) + "="
+                + URLEncoder.encode(token, StandardCharsets.UTF_8));
+    }
+
     private Landing get(State state, URI uri) {
+        return get(state, uri, null);
+    }
+
+    private Landing get(State state, URI uri, @Nullable String referer) {
         URI current = uri;
         for (int i = 0; i <= MAX_REDIRECTS; i++) {
             HttpGet get = new HttpGet(current);
             get.setHeader("Accept", "text/html,application/xhtml+xml,*/*;q=0.8");
+            if (referer != null) {
+                get.setHeader("Referer", referer);
+            }
             Exchange response = send(state, get);
             if (response.location() == null || response.status() < 300 || response.status() >= 400) {
                 return new Landing(current, response);

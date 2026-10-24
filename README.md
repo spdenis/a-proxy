@@ -139,7 +139,10 @@ How it works, in order of preference:
    `javax.faces.ViewState`) and the browser's cookies (with the Quick View `JSESSIONID`), and sends API searches the
    same way, changing only the job name. So: log in, open Quick View, then use the API. The API and the browser tab share that page state (`autosys.webui.quickview.reuse-browser-page=false`
    turns this off).
-2. **A Quick View page of its own** from your browser's AutoSys session, opened via `index.jsp`.
+2. **A Quick View page of its own** from your browser's AutoSys session, opened via `index.jsp` the way the UI's
+   launcher opens it: `?randomId=…&AntiXSRFToken=…` with `Referer: /wcc/ui/Launcher.html`. AutoSys answers 403
+   without the token, so the proxy takes it from the query or headers of the browser's requests
+   (`autosys.webui.quickview.xsrf-param`); until it has seen one, this step fails.
 3. **Its own login** with the captured credentials.
 
 For 2: the proxy uses the AutoSys session of your browser login, so there is no second login. At login it
