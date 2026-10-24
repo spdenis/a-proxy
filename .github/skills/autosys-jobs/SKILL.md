@@ -11,10 +11,13 @@ never guess job data.
 
 ## Setup
 
-- `AUTOSYS_PROXY_TOKEN` must hold the user's API token (`asp_...`). If it is missing or a call returns 401,
-  stop and tell the user: log in to AutoSys through the proxy, copy the token from
-  `http://localhost:8080/proxy/token`, then run `$env:AUTOSYS_PROXY_TOKEN = 'asp_...'` in the terminal.
-  Never ask the user to paste the token into the chat, and never print it.
+- The script finds the user's API token (`asp_...`) by itself: in `AUTOSYS_PROXY_TOKEN` if set, else in the
+  file `~/.autosys-proxy/token`. Do not look for, read or print the token yourself, and never ask the user to
+  paste it into the chat.
+- If the script says there is no token or it got 401 (exit code 2), stop and tell the user to: log in to AutoSys
+  through the proxy, press **Copy token** on `http://localhost:8080/proxy/token`, and run in their own terminal
+  `powershell -NoProfile -ExecutionPolicy Bypass -File <skill-dir>/autosys.ps1 set-token` (it saves the token
+  from the clipboard). Then retry. Do not run `set-token` yourself.
 - `AUTOSYS_PROXY_URL` overrides the proxy address (default `http://localhost:8080`).
 
 ## How to call it

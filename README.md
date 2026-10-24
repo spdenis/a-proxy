@@ -184,8 +184,11 @@ dependencies of MY_JOB", "which jobs depend on MY_JOB, also indirectly" or "whic
 calls the job API through `autosys.ps1` (PowerShell) and answers from the result.
 
 - Copilot finds it in this repository; to use it from any workspace, copy the folder to `~/.copilot/skills/`.
-- Set the token in the terminal Copilot uses: `$env:AUTOSYS_PROXY_TOKEN = 'asp_...'` (from `/proxy/token`);
-  `AUTOSYS_PROXY_URL` if the proxy is not on `http://localhost:8080`.
+- After each login, give the script the new token: press **Copy token** on `/proxy/token`, then run once in any
+  terminal `powershell -NoProfile -ExecutionPolicy Bypass -File .github/skills/autosys-jobs/autosys.ps1 set-token`.
+  It checks the token with the proxy and saves it in `~/.autosys-proxy/token`, which every later call reads,
+  including Copilot's own terminals. (`AUTOSYS_PROXY_TOKEN`, if set, takes precedence; `AUTOSYS_PROXY_URL` if the
+  proxy is not on `http://localhost:8080`.)
 - The script works on its own too: `powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 downstream MY_JOB -Depth 3`.
   Commands: `job`, `status`, `deps`, `runs`, `jobs`, `search`, `downstream`, `upstream`, `tree`, `session`.
 

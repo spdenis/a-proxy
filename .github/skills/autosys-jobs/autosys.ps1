@@ -6,18 +6,20 @@
     Single calls (job, status, deps, runs, jobs, search, session) print the API response.
     Traversals (downstream, upstream, tree) make one call per job and print the collected graph.
 
-    Needs:
-      AUTOSYS_PROXY_TOKEN  API token from http://localhost:8080/proxy/token (asp_...)
-      AUTOSYS_PROXY_URL    proxy base URL, default http://localhost:8080
+    The API token (asp_..., from http://localhost:8080/proxy/token) is read from
+      AUTOSYS_PROXY_TOKEN       environment variable, if set, else
+      ~/.autosys-proxy/token    saved by "autosys.ps1 set-token" (other file: AUTOSYS_PROXY_TOKEN_FILE)
+    AUTOSYS_PROXY_URL is the proxy base URL, default http://localhost:8080.
 
 .EXAMPLE
+    powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 set-token     # token from the clipboard
     powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 deps MY_JOB
     powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 downstream MY_JOB -Depth 3
     powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 tree MY_BOX
 #>
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('session', 'job', 'status', 'deps', 'runs', 'jobs', 'search', 'downstream', 'upstream', 'tree')]
+    [ValidateSet('set-token', 'session', 'job', 'status', 'deps', 'runs', 'jobs', 'search', 'downstream', 'upstream', 'tree')]
     [string]$Command,
 
     [Parameter(Position = 1)]
@@ -32,17 +34,30 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $base = if ($env:AUTOSYS_PROXY_URL) { $env:AUTOSYS_PROXY_URL.TrimEnd('/') } else { 'http://localhost:8080' }
-$token = $env:AUTOSYS_PROXY_TOKEN
+$tokenFile = if ($env:AUTOSYS_PROXY_TOKEN_FILE) { $env:AUTOSYS_PROXY_TOKEN_FILE } else { Join-Path (Join-Path $HOME '.autosys-proxy') 'token' }
+$howToSetToken = "Log in to AutoSys through the proxy, press 'Copy token' on $base/proxy/token, then run: autosys.ps1 set-token"
 
 function Fail([string]$message) {
     [Console]::Error.WriteLine($message)
     exit 2
 }
 
-if (-not $token) {
-    Fail "AUTOSYS_PROXY_TOKEN is not set. Log in to AutoSys through the proxy, copy the token from $base/proxy/token and set it: `$env:AUTOSYS_PROXY_TOKEN = 'asp_...'"
+if ($Command -eq 'set-token') {
+    $token = if ($Name) { $Name } else { (Get-Clipboard | Out-String) }
+    $token = "$token".Trim()
+    if ($token -notmatch '^asp_[A-Za-z0-9_-]+$') {
+        Fail "No API token (asp_...) $(if ($Name) { 'given' } else { 'in the clipboard' }). $howToSetToken"
+    }
+} else {
+    $token = $env:AUTOSYS_PROXY_TOKEN
+    if (-not $token -and (Test-Path -LiteralPath $tokenFile)) {
+        $token = (Get-Content -LiteralPath $tokenFile -Raw).Trim()
+    }
+    if (-not $token) {
+        Fail "No API token yet. $howToSetToken"
+    }
 }
-if ($Command -ne 'session' -and -not $Name) {
+if ($Command -ne 'session' -and $Command -ne 'set-token' -and -not $Name) {
     Fail "A job name is required: autosys.ps1 $Command <JOB_NAME>"
 }
 
@@ -63,7 +78,7 @@ function Get-Api([string]$path) {
             Fail "The proxy at $base is not reachable: $($_.Exception.Message)"
         }
         if ($status -eq 401) {
-            Fail "401: the token is missing, expired or replaced by a newer login. Log in again through the proxy and copy a new token from $base/proxy/token."
+            Fail "401: the token is expired or was replaced by a newer login. $howToSetToken"
         }
         return @{ ok = $false; status = $status; body = $problem }
     }
@@ -129,6 +144,17 @@ function Walk([string]$start, [string]$endpoint, [scriptblock]$next) {
 }
 
 switch ($Command) {
+    # checks the token with the proxy, then saves it for later calls (also from other terminals)
+    'set-token' {
+        $r = Get-Api '/api/v1/session'
+        if (-not $r.ok) { Fail "The proxy did not accept the token (status $($r.status))." }
+        $dir = Split-Path -Parent $tokenFile
+        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
+        Set-Content -LiteralPath $tokenFile -Value $token -NoNewline -Encoding Ascii
+        if ($IsLinux -or $IsMacOS) { chmod 600 $tokenFile }
+        Write-Output "Token saved to $tokenFile for user '$($r.body.username)' (valid until $($r.body.expiresAt) if unused, at most until $($r.body.absoluteExpiresAt))."
+        if ($env:AUTOSYS_PROXY_TOKEN) { Write-Output "Note: AUTOSYS_PROXY_TOKEN is set in this terminal and takes precedence over the file." }
+    }
     'session' { Print-Single '/api/v1/session' }
     'job'     { Print-Single (Job-Path $Name) }
     'status'  { Print-Single (Job-Path $Name '/status') }
