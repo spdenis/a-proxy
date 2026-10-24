@@ -245,6 +245,9 @@ class QuickViewApiTest {
         browser.cookies.put("JSESSIONID", "js-browser");
 
         // the user only opens Quick View, without searching
+        browser.get("/ui/Login.html");
+        assertThat(browser.get("/wcc/quickview/index.jsp?appToken=T-1", "Referer",
+                "http://localhost:" + port + "/wcc/ui/Launcher.html?x=secret-ref").statusCode()).isEqualTo(403);
         HttpResponse<String> page = browser.get("/wcc/quickview/pages/main.jsf?AntiXSRFToken=XSRF-1&OWASP-CSRFTOKEN=C-1");
         assertThat(page.statusCode()).isEqualTo(200);
         assertThat(page.body()).contains("jobDetailsForm");
@@ -255,10 +258,13 @@ class QuickViewApiTest {
                 .withHeader("Cookie", equalTo("WCC-ASID=asid-js; JSESSIONID=js-browser; wccQv=qv-1"))
                 .withRequestBody(containing("javax.faces.ViewState=%21VS-1"))
                 .withRequestBody(containing("org.apache.myfaces.trinidad.faces.FORM=jobDetailsForm")));
-        autosys.verify(0, com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor(
+        autosys.verify(1, com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor(
                 urlPathEqualTo("/wcc/quickview/index.jsp")));
         assertThat(output.getAll()).contains("API calls of 'carol' will use the Quick View page the browser opened")
-                .doesNotContain("XSRF-1").doesNotContain("js-browser");
+                .containsPattern("browser of 'carol' opens Quick View: GET /wcc/quickview/index.jsp query \\[appToken\\] "
+                        + "headers \\[.*\\] cookies \\[[^\\]]*JSESSIONID[^\\]]*\\] referer /wcc/ui/Launcher.html\\?x -> status 403 "
+                        + "location null sets cookies \\[\\]; its requests before: \\[.*GET /ui/Login.html\\]")
+                .doesNotContain("T-1").doesNotContain("secret-ref").doesNotContain("XSRF-1").doesNotContain("js-browser");
     }
 
     @Test

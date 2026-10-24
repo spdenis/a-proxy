@@ -93,6 +93,7 @@ public class QuickViewClient {
         @Nullable BrowserPage failedPage;
         HtmlForms.@Nullable Form form;
         @Nullable String pageUrl;
+        @Nullable String userAgent;
 
         void reset() {
             cookies.clear();
@@ -108,6 +109,7 @@ public class QuickViewClient {
         session.lock().lock();
         try {
             State state = states.get(session, s -> new State());
+            state.userAgent = session.browserUserAgent();
             String lastProblem = "no attempt";
             for (int attempt = 1; attempt <= Math.max(1, quickview.maxAttempts()); attempt++) {
                 if (state.form == null && !useBrowserPage(session, state)) {
@@ -377,7 +379,8 @@ public class QuickViewClient {
         if (cookie != null) {
             request.setHeader("Cookie", cookie);
         }
-        request.setHeader("User-Agent", "Mozilla/5.0 (compatible; a-proxy)");
+        // as the user's browser: a filter in front of AutoSys may refuse unknown clients
+        request.setHeader("User-Agent", state.userAgent == null ? "Mozilla/5.0 (compatible; a-proxy)" : state.userAgent);
         // dates in the tables are parsed in this locale; bodies are read uncompressed
         request.setHeader("Accept-Language", "en-US,en;q=0.8");
         request.setHeader("Accept-Encoding", "identity");

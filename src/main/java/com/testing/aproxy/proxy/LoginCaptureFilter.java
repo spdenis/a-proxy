@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.zip.GZIPInputStream;
 
 import com.testing.aproxy.audit.AuditLogger;
@@ -66,6 +67,7 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
     private static final AntPathMatcher MATCHER = new AntPathMatcher();
     private static final JsonMapper JSON = JsonMapper.shared();
     private static final int MAX_JSON_LOGIN_BODY = 64 * 1024;
+    private static final Pattern STATIC = Pattern.compile("(?i)\\.(js|css|png|gif|jpe?g|svg|ico|woff2?|ttf|map)$");
 
     private final AutosysProperties.Login login;
     private final AutosysProperties.Quickview quickview;
@@ -103,6 +105,16 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         if (!isLoginRequest(request)) {
             ProxySession linked = rememberBrowserCookies(request);
+            if (linked != null && isQuickViewEntry(request)) {
+                // what the browser sends to open Quick View, to compare with the proxy's own attempt
+                List<String> before = linked.recentRequests();
+                chain.doFilter(request, response);
+                logQuickViewEntry(request, response, linked, before);
+                return;
+            }
+            if (linked != null && !STATIC.matcher(quickViewPath(request)).find()) {
+                linked.noteRequest(request.getMethod() + " " + quickViewPath(request));
+            }
             if (linked != null && isQuickViewPageLoad(request)) {
                 ContentCachingResponseWrapper caching = new ContentCachingResponseWrapper(response);
                 try {
@@ -236,6 +248,7 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
             }
             return null;
         }
+        session.rememberBrowserUserAgent(request.getHeader(HttpHeaders.USER_AGENT));
         rememberQuickViewPage(request, session, header);
         List<String> added = session.rememberBrowserCookies(header);
         if (!added.isEmpty()) {
@@ -243,6 +256,42 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
                     session.browserCookies().keySet(), added, path);
         }
         return session;
+    }
+
+    private boolean isQuickViewEntry(HttpServletRequest request) {
+        return "GET".equalsIgnoreCase(request.getMethod()) && quickViewPath(request).equals(quickview.entryPath());
+    }
+
+    /** Names only (query parameters, headers, cookies); the Referer and Location as paths. */
+    private void logQuickViewEntry(HttpServletRequest request, HttpServletResponse response, ProxySession session,
+            List<String> before) {
+        String query = request.getQueryString();
+        List<String> params = query == null ? List.of()
+                : Arrays.stream(query.split("&")).map(p -> p.split("=", 2)[0]).toList();
+        List<String> headers = Collections.list(request.getHeaderNames()).stream()
+                .filter(h -> !h.equalsIgnoreCase(HttpHeaders.COOKIE)).toList();
+        String cookieHeader = HeaderRewriter.stripOwnCookies(
+                String.join("; ", Collections.list(request.getHeaders(HttpHeaders.COOKIE))),
+                PendingTokenStore.OWN_COOKIE_PREFIX);
+        List<String> cookies = cookieHeader == null ? List.of() : Arrays.stream(cookieHeader.split(";"))
+                .map(c -> c.split("=", 2)[0].strip()).filter(c -> !c.isEmpty()).toList();
+        List<String> setCookies = response.getHeaders(HttpHeaders.SET_COOKIE).stream()
+                .map(c -> c.split("=", 2)[0].strip()).toList();
+        log.info("[backend] browser of '{}' opens Quick View: GET {} query {} headers {} cookies {} referer {} -> "
+                + "status {} location {} sets cookies {}; its requests before: {}", session.username(),
+                quickViewPath(request), params, headers, cookies, pathAndParams(request.getHeader(HttpHeaders.REFERER)),
+                response.getStatus(), pathAndParams(response.getHeader(HttpHeaders.LOCATION)), setCookies, before);
+    }
+
+    /** {@code /path?name1&name2} of a URL, without host and parameter values. */
+    private static @Nullable String pathAndParams(@Nullable String url) {
+        if (url == null) {
+            return null;
+        }
+        String rest = url.replaceFirst("^[a-zA-Z][a-zA-Z0-9+.-]*://[^/]*", "");
+        String[] parts = rest.split("\\?", 2);
+        return parts.length == 1 ? parts[0] : parts[0] + "?" + Arrays.stream(parts[1].split("&"))
+                .map(p -> p.split("=", 2)[0]).collect(Collectors.joining("&"));
     }
 
     /** The browser loads the Quick View page itself (GET main.jsf, e.g. after index.jsp redirected it). */

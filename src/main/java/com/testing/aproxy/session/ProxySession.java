@@ -1,7 +1,9 @@
 package com.testing.aproxy.session;
 
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -27,11 +29,14 @@ public final class ProxySession {
     private final List<String> autosysCookies;
     /* name -> values in the browser's order (several when cookies of one name exist for different paths) */
     private final ConcurrentMap<String, List<String>> browserCookies = new ConcurrentHashMap<>();
+    /* "METHOD path" of the browser's latest page and XHR requests, for diagnostics */
+    private final Deque<String> recentRequests = new ArrayDeque<>();
     private final Instant createdAt;
     private final Instant absoluteExpiresAt;
     private final ReentrantLock lock = new ReentrantLock();
     private volatile @Nullable String browserKeyHash;
     private volatile @Nullable BrowserPage quickViewPage;
+    private volatile @Nullable String browserUserAgent;
     private volatile Instant lastUsedAt;
     private volatile SessionState state = SessionState.ACTIVE;
 
@@ -125,6 +130,33 @@ public final class ProxySession {
         }
     }
 
+    /** The User-Agent of the browser linked to this session; the proxy's own AutoSys requests send it too. */
+    public @Nullable String browserUserAgent() {
+        return browserUserAgent;
+    }
+
+    public void rememberBrowserUserAgent(@Nullable String userAgent) {
+        if (userAgent != null && !userAgent.isBlank()) {
+            browserUserAgent = userAgent;
+        }
+    }
+
+    /** Notes a browser request ("METHOD path", no query) for diagnostics; keeps the latest 20. */
+    public void noteRequest(String request) {
+        synchronized (recentRequests) {
+            if (recentRequests.size() == 20) {
+                recentRequests.removeFirst();
+            }
+            recentRequests.addLast(request);
+        }
+    }
+
+    public List<String> recentRequests() {
+        synchronized (recentRequests) {
+            return List.copyOf(recentRequests);
+        }
+    }
+
     public Instant createdAt() {
         return createdAt;
     }
@@ -163,6 +195,9 @@ public final class ProxySession {
         credentials.wipe();
         browserCookies.clear();
         quickViewPage = null;
+        synchronized (recentRequests) {
+            recentRequests.clear();
+        }
     }
 
     @Override
