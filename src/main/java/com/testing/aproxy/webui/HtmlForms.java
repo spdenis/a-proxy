@@ -37,6 +37,11 @@ public final class HtmlForms {
         return null;
     }
 
+    /** All fields in some markup, e.g. a partial-page response whose fragments are parts of a form. */
+    public static Map<String, String> inputs(String markup) {
+        return fields(markup.replace("<![CDATA[", "").replace("]]>", ""));
+    }
+
     private static Map<String, String> fields(String formBody) {
         Map<String, String> fields = new LinkedHashMap<>();
         Matcher m = FIELD.matcher(formBody);

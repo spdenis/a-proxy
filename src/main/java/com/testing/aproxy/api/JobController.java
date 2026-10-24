@@ -11,6 +11,8 @@ import com.testing.aproxy.webui.JobPage;
 import com.testing.aproxy.webui.QuickViewClient;
 
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -33,6 +35,8 @@ public class JobController {
     private static final Pattern JOB_NAME = Pattern.compile("[A-Za-z0-9_.#-]{1,128}");
     private static final Pattern JOB_SEARCH = Pattern.compile("[A-Za-z0-9_.#*%-]{1,128}");
 
+    private static final Logger log = LoggerFactory.getLogger(JobController.class);
+
     private final QuickViewClient quickView;
 
     public JobController(QuickViewClient quickView) {
@@ -42,9 +46,18 @@ public class JobController {
     public record JobList(String query, List<JobPage.JobRow> jobs, Instant fetchedAt) {
     }
 
-    public record JobDetails(String name, JobPage.@Nullable JobRow status, Map<String, String> attributes,
+    /**
+     * @param type BOX (contains jobs) or REGULAR
+     * @param jobs for a box, the jobs directly in it (a nested box shows as one job of type BOX);
+     *             null for a regular job, or when Quick View did not list them
+     */
+    public record JobDetails(String name, @Nullable String type, @Nullable String jobType, @Nullable String box,
+            JobPage.@Nullable JobRow status, @Nullable List<JobPage.JobRow> jobs, Map<String, String> attributes,
             List<JobPage.Condition> conditions, List<JobPage.Dependent> dependents,
             List<Map<String, String>> resources, List<JobPage.Run> runs, Instant fetchedAt) {
+    }
+
+    public record BoxJobs(String name, List<JobPage.JobRow> jobs, Instant fetchedAt) {
     }
 
     public record JobDependencies(String name, @Nullable String condition, List<JobPage.Condition> conditions,
@@ -66,8 +79,33 @@ public class JobController {
     @GetMapping("/{name}")
     public JobDetails details(@AuthenticationPrincipal ProxySession session, @PathVariable String name) {
         JobPage page = job(session, name);
-        return new JobDetails(page.attributes().get("Name"), page.row(name).orElse(null), page.attributes(),
-                page.conditions(), page.dependents(), page.resources(), page.runs(), Instant.now());
+        JobPage.JobRow row = page.row(name).orElse(null);
+        String jobName = page.attributes().get("Name");
+        List<JobPage.JobRow> jobs = null;
+        if (row != null && JobPage.BOX.equals(row.type())) {
+            try {
+                jobs = JobPage.parse(quickView.expandBox(session, jobName)).jobsIn(jobName);
+            } catch (BackendException e) {
+                log.warn("[backend] jobs of box {} not listed: {}", jobName, e.getMessage());
+            }
+        }
+        return new JobDetails(jobName, row == null ? null : row.type(), row == null ? null : row.jobType(),
+                row != null && row.box() != null ? row.box() : page.attributes().get("Box"), row, jobs,
+                page.attributes(), page.conditions(), page.dependents(), page.resources(), page.runs(),
+                Instant.now());
+    }
+
+    @GetMapping("/{name}/jobs")
+    public BoxJobs jobs(@AuthenticationPrincipal ProxySession session, @PathVariable String name) {
+        JobPage page = job(session, name);
+        JobPage.JobRow row = page.row(name).orElse(null);
+        if (row == null || !JobPage.BOX.equals(row.type())) {
+            throw new BackendException(HttpStatus.CONFLICT, "not-a-box", name + " is not a box job"
+                    + (row == null || row.jobType() == null ? "" : " (its type is " + row.jobType() + ")"));
+        }
+        String jobName = page.attributes().get("Name");
+        return new BoxJobs(jobName, JobPage.parse(quickView.expandBox(session, jobName)).jobsIn(jobName),
+                Instant.now());
     }
 
     @GetMapping("/{name}/status")

@@ -26,7 +26,12 @@ public final class HtmlTables {
     private HtmlTables() {
     }
 
-    public record Cell(String text, boolean header) {
+    /** @param html the cell's markup (without nested table tags), e.g. for link targets and titles */
+    public record Cell(String text, boolean header, String html) {
+
+        public Cell(String text, boolean header) {
+            this(text, header, "");
+        }
     }
 
     public record Table(int index, @Nullable String id, @Nullable String summary, int depth, List<List<Cell>> rows) {
@@ -42,10 +47,14 @@ public final class HtmlTables {
 
         /** Rows made of data cells, ignoring header rows and rows without any text. */
         public List<List<String>> dataRows() {
+            return dataCells().stream().map(r -> r.stream().map(Cell::text).toList()).toList();
+        }
+
+        /** As {@link #dataRows()}, with each cell's markup. */
+        public List<List<Cell>> dataCells() {
             return rows.stream()
                     .filter(r -> r.stream().anyMatch(c -> !c.header()))
-                    .map(r -> r.stream().map(Cell::text).toList())
-                    .filter(r -> r.stream().anyMatch(t -> !t.isEmpty()))
+                    .filter(r -> r.stream().anyMatch(c -> !c.text().isEmpty()))
                     .toList();
         }
     }
@@ -169,7 +178,8 @@ public final class HtmlTables {
 
         void endCell() {
             if (cell != null && row != null) {
-                row.add(new Cell(HtmlTables.text(cell.toString()), cellIsHeader));
+                String html = cell.toString();
+                row.add(new Cell(HtmlTables.text(html), cellIsHeader, html.strip()));
             }
             cell = null;
         }

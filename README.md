@@ -118,19 +118,27 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/jobs/MY_JOB 
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/jobs/MY_JOB/status         # current status row
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/jobs/MY_JOB/dependencies   # conditions + dependents
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/jobs/MY_JOB/runs           # run history
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/jobs/MY_BOX/jobs           # jobs in a box (409 if not a box)
 curl -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/jobs?name=MY_JOB*"         # search
 ```
 
 ```json
-{"name":"MY_JOB",
- "status":{"name":"MY_JOB","box":"MY_BOX","startTime":"Oct 23, 2026 3:44:41 PM","endTime":"Oct 23, 2026 3:45:06 PM",
+{"name":"MY_JOB", "type":"REGULAR", "jobType":"CMD", "box":"MY_BOX",
+ "status":{"name":"MY_JOB","type":"REGULAR","jobType":"CMD","box":"MY_BOX","startTime":"Oct 23, 2026 3:44:41 PM","endTime":"Oct 23, 2026 3:45:06 PM",
            "status":"SUCCESS","statusText":"Success","run":"711037496","priority":null,"exitCode":"0"},
+ "jobs":null,
  "attributes":{"Name":"MY_JOB","Description":"...","Send to machine":"host","Condition":"s(OTHER_JOB,10.00)", "...":"..."},
  "conditions":[{"condition":"OTHER_JOB","expectedValue":"SUCCESS","currentStatus":"Success","satisfied":true,"satisfiedText":"Yes"}],
  "dependents":[{"jobName":"NEXT_JOB","condition":"s(MY_JOB)","satisfied":null,"satisfiedText":null}],
  "resources":[], "runs":[{"startTime":"...","endTime":"...","status":"SUCCESS","statusText":"SUCCESS","run":"711037496/2","exitCode":"0","machine":"host"}],
  "fetchedAt":"2026-10-23T21:30:00Z"}
 ```
+
+`type` is `BOX` (a job that contains jobs) or `REGULAR`; `jobType` is the AutoSys type from Quick View's icon
+(`BOX`, `CMD`, `FW`, ...). For a box, `jobs` lists the jobs directly in it with their status, as Quick View shows them
+when you expand the box (a second request to AutoSys); a box inside it appears as one job of type `BOX`, so call the
+API for that box to see its jobs. `jobs` is null for a regular job, and when Quick View did not list them (logged as
+a WARN).
 
 How it works, in order of preference:
 

@@ -41,6 +41,14 @@ class WebUiPartsTest {
         assertThat(JobPage.satisfied("Not satisfied")).isFalse();
         assertThat(JobPage.satisfied("Yes")).isTrue();
         assertThat(JobPage.satisfied("maybe")).isNull();
+        assertThat(JobPage.satisfied("Condition not satisfied")).isFalse();
+        assertThat(JobPage.satisfied("Condition satisfied")).isTrue();
+        assertThat(JobPage.nameCell("Select to expand Box (box) LONG_BO...", "<span title=\"Go to LONG_BOX\">"))
+                .containsExactly("LONG_BOX", "BOX", "BOX");
+        assertThat(JobPage.nameCell("File Watcher (fw) FEED_WATCH", ""))
+                .containsExactly("FEED_WATCH", "REGULAR", "FW");
+        assertThat(JobPage.nameCell("PLAIN_JOB", "<a href=\"main.jsf?a=1&amp;jobName=PLAIN%23JOB\">"))
+                .containsExactly("PLAIN#JOB", null, null);
     }
 
     @Test

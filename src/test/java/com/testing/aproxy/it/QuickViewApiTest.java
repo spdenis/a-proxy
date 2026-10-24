@@ -98,6 +98,18 @@ class QuickViewApiTest {
         stubSearch("TEST_FX_LOADER", "job.xml");
         stubSearch("NOPE", "not-found.xml");
         stubSearch("TEST_FX*", "job.xml");
+        stubSearch("TEST_BOX", "box.xml");
+        // expanding the box: the fields the search response added, then the tree event on its first row
+        autosys.stubFor(post(urlEqualTo(SEARCH)).atPriority(1)
+                .withHeader("Cookie", containing("JSESSIONID=js-1"))
+                .withRequestBody(containing("jobNameInput=TEST_BOX&"))
+                .withRequestBody(containing("boxJobResultTable%3A_us=0"))
+                .withRequestBody(containing("treeTableId%3ArangeStart=0"))
+                .withRequestBody(containing("org.apache.myfaces.trinidad.faces.FORM=jobDetailsForm"))
+                .withRequestBody(containing("source=boxJobResultTable&partialTargets=boxJobResultTable&partial=true"))
+                .withRequestBody(containing("event=show&path=0"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/xml;charset=utf-8")
+                        .withBody(resource("box-jobs.xml"))));
     }
 
     static com.github.tomakehurst.wiremock.client.ResponseDefinitionBuilder loginOk(String asid) {
@@ -121,6 +133,10 @@ class QuickViewApiTest {
 
         JsonNode job = api("/api/v1/jobs/TEST_FX_LOADER", token, 200);
         assertThat(job.at("/name").asString()).isEqualTo("TEST_FX_LOADER");
+        assertThat(job.at("/type").asString()).isEqualTo("REGULAR");
+        assertThat(job.at("/jobType").asString()).isEqualTo("CMD");
+        assertThat(job.at("/box").asString()).isEqualTo("TEST_PMC_BOX");
+        assertThat(job.at("/jobs").isNull()).isTrue();
         assertThat(job.at("/status/name").asString()).isEqualTo("TEST_FX_LOADER");
         assertThat(job.at("/status/box").asString()).isEqualTo("TEST_PMC_BOX");
         assertThat(job.at("/status/status").asString()).isEqualTo("SUCCESS");
@@ -347,6 +363,32 @@ class QuickViewApiTest {
         assertThat(output.getAll()).contains("response 403 text/html", "body: <html>CSRF token missing</html>",
                 "sent headers [Accept, X-Requested-With, Origin, Referer")
                 .doesNotContain(PASSWORD);
+    }
+
+    @Test
+    void boxListsItsJobs() throws Exception {
+        String token = login();
+        JsonNode box = api("/api/v1/jobs/TEST_BOX", token, 200);
+        assertThat(box.at("/type").asString()).isEqualTo("BOX");
+        assertThat(box.at("/jobType").asString()).isEqualTo("BOX");
+        assertThat(box.at("/box").isNull()).isTrue();
+        assertThat(box.at("/status/name").asString()).isEqualTo("TEST_BOX");
+        assertThat(box.at("/status/status").asString()).isEqualTo("SUCCESS");
+        assertThat(box.at("/dependents/0/satisfied").asBoolean()).isFalse();
+        assertThat(box.at("/jobs").size()).isEqualTo(2);
+        assertThat(box.at("/jobs/0/name").asString()).isEqualTo("TEST_STOP_A");
+        assertThat(box.at("/jobs/0/type").asString()).isEqualTo("REGULAR");
+        assertThat(box.at("/jobs/0/box").asString()).isEqualTo("TEST_BOX");
+        // shortened in the tree; the full name comes from the link
+        assertThat(box.at("/jobs/1/name").asString()).isEqualTo("TEST_SUB_BOX_WITH_A_LONG_NAME");
+        assertThat(box.at("/jobs/1/type").asString()).isEqualTo("BOX");
+        assertThat(box.at("/jobs/1/status").asString()).isEqualTo("FAILURE");
+
+        JsonNode jobs = api("/api/v1/jobs/TEST_BOX/jobs", token, 200);
+        assertThat(jobs.at("/name").asString()).isEqualTo("TEST_BOX");
+        assertThat(jobs.at("/jobs/1/exitCode").asString()).isEqualTo("1");
+        assertThat(api("/api/v1/jobs/TEST_FX_LOADER/jobs", token, 409).at("/detail").asString())
+                .contains("not a box job").contains("CMD");
     }
 
     @Test

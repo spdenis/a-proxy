@@ -1,0 +1,25 @@
+<?xml version="1.0" ?>
+<content action="/wcc/quickview/pages/main.jsf?AntiXSRFToken=XSRF-1&amp;conversationContext=1">
+<fragment><![CDATA[<form id="headerForm" name="headerForm" method="POST" action="/wcc/quickview/pages/main.jsf?AntiXSRFToken=XSRF-1&amp;conversationContext=1"><input type="hidden" name="scrollToAnchorId" value=""><input type="hidden" name="org.apache.myfaces.trinidad.faces.FORM" value="headerForm"><span id="tr_headerForm_Postscript"><input type="hidden" name="javax.faces.ViewState" value="!VS-3"></span></form>]]></fragment>
+<fragment><![CDATA[<form id="jobDetailsForm" name="jobDetailsForm" method="POST" action="/wcc/quickview/pages/main.jsf?AntiXSRFToken=XSRF-1&amp;conversationContext=1">
+<input type="hidden" name="AntiXSRFToken" value="XSRF-1"><input type="hidden" name="conversationContext" value="1">
+<input id="jobNameInput" name="jobNameInput" type="text" value="TEST_BOX"><input type="hidden" name="jobNameInput::hidden" value="false">
+<div id="boxJobResultTable"><input type="hidden" name="boxJobResultTable:_us" value="0">
+<table class="af_table_content" summary="Search Results"><tr><th>Select</th><th>Name</th><th>Box Name</th><th>Start Time</th><th>End Time</th><th>Status</th><th>Run</th><th>Priority</th><th>Exit Code</th></tr>
+<tr><td><img src="/wcc/quickview/images/select.png" alt="Select"></td>
+<td class="af_column_cell-text"><table cellpadding="0" cellspacing="0" border="0" summary=""><tr><td><a href="#" onclick="return false;"><img src="/images/expand.png" alt="Select to expand" title="Select to expand"></a></td><td><img src="/wcc/quickview/images/job_box.png" alt="Box (box)"></td><td align="left" width="100%"><a class="OraLink" href="main.jsf?serverName=QA5&amp;displayMode=standalone&amp;AntiXSRFToken=XSRF-1&amp;jobName=TEST_BOX"><span title="Go to TEST_BOX">TEST_BOX</span></a></td></tr></table></td>
+<td></td><td nowrap>Oct 24, 2026 10:00:14 AM</td><td nowrap>Oct 24, 2026 10:02:47 AM</td>
+<td><img title="Success" alt="Success (SUCCESS)" src="/wcc/quickview/images/status/job_completed_16.png"></td>
+<td>711442132</td><td></td><td>0</td></tr></table>
+<input type="hidden" name="boxJobResultTable:rangeStart" value="0"></div>
+<input type="hidden" name="treeTableId:rangeStart" value="0">
+<table summary=""><tr><th>Attribute Name</th><th>Attribute Value</th></tr>
+<tr><td><a href="#"><img alt="Select to collapse"></a> Primary</td><td></td></tr><tr><td>Name</td><td>TEST_BOX</td></tr>
+<tr><td>Description</td><td>Stops all components</td></tr><tr><td>Owner</td><td>svc</td></tr></table>
+<table summary=""><tr><th>Job Name</th><th>Condition</th><th>Condition Satisfied</th></tr>
+<tr><td>TEST_NOTIFIER</td><td>d(TEST_BOX,10)</td><td>Condition not satisfied</td></tr></table>
+<table summary=""><tr><th>Atomic Condition</th><th>Expected Value</th><th>Current Status</th><th>Condition Satisfied</th></tr>
+<tr><td colspan="4">No results found</td></tr></table>
+<input type="hidden" name="org.apache.myfaces.trinidad.faces.FORM" value="jobDetailsForm"><input type="hidden" name="_noJavaScript" value="false">
+<span id="tr_jobDetailsForm_Postscript"><input type="hidden" name="javax.faces.ViewState" value="!VS-3"></span></form>]]></fragment>
+</content>

@@ -141,7 +141,10 @@ public record AutosysProperties(
              */
             @DefaultValue("AntiXSRFToken") String xsrfParam,
             /* Referer of the entry page request, as when the launcher opens Quick View. */
-            @DefaultValue("/wcc/ui/Launcher.html") String entryReferer) {
+            @DefaultValue("/wcc/ui/Launcher.html") String entryReferer,
+            /* Tree table that lists a box with its jobs, and the Trinidad event that expands a row of it. */
+            @DefaultValue("boxJobResultTable") String boxTable,
+            @DefaultValue("show") String expandEvent) {
 
         public Quickview {
             loginPage = blankToNull(loginPage);

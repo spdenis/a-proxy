@@ -71,6 +71,8 @@ autosys:
       max-attempts: 2               # 2 = log in again once when the AutoSys session has expired
       xsrf-param: AntiXSRFToken     # launcher token for index.jsp, taken from the browser's requests
       entry-referer: /wcc/ui/Launcher.html
+      box-table: boxJobResultTable  # results tree of a box; expanding its first row lists the box's jobs
+      expand-event: show
 
   # Record AutoSys UI traffic (secrets masked) to learn its internal endpoints. Development only.
   capture:

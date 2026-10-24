@@ -107,32 +107,63 @@ public class QuickViewClient {
     public String searchJob(ProxySession session, String jobName) {
         session.lock().lock();
         try {
-            State state = states.get(session, s -> new State());
-            state.userAgent = session.browserUserAgent();
-            String lastProblem = "no attempt";
-            for (int attempt = 1; attempt <= Math.max(1, quickview.maxAttempts()); attempt++) {
-                if (state.form == null && !useBrowserPage(session, state)) {
-                    open(session, state);
-                }
-                Exchange response = postSearch(state, jobName);
-                String problem = partialResponseProblem(response);
-                if (problem == null) {
-                    remember(state, response.body());
-                    return response.body();
-                }
-                lastProblem = problem;
-                if (state.usedPage != null) {
-                    state.failedPage = state.usedPage;
-                }
-                log.info("[backend] Quick View session of '{}' is no longer valid ({}); logging in again",
-                        session.username(), problem);
-                state.reset();
-            }
-            throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-session",
-                    "AutoSys Quick View did not accept the request: " + lastProblem);
+            return search(session, state(session), jobName);
         } finally {
             session.lock().unlock();
         }
+    }
+
+    /**
+     * Searches for a box and expands it in the results tree, as clicking its expand icon does;
+     * returns that response, which lists the box and the jobs directly in it.
+     */
+    public String expandBox(ProxySession session, String boxName) {
+        session.lock().lock();
+        try {
+            State state = state(session);
+            String found = search(session, state, boxName);
+            Exchange response = postExpand(state, boxName, found);
+            String problem = partialResponseProblem(response);
+            if (problem != null) {
+                state.reset();
+                throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-session",
+                        "AutoSys Quick View did not expand box " + boxName + ": " + problem);
+            }
+            remember(state, response.body());
+            return response.body();
+        } finally {
+            session.lock().unlock();
+        }
+    }
+
+    private State state(ProxySession session) {
+        State state = states.get(session, s -> new State());
+        state.userAgent = session.browserUserAgent();
+        return state;
+    }
+
+    private String search(ProxySession session, State state, String jobName) {
+        String lastProblem = "no attempt";
+        for (int attempt = 1; attempt <= Math.max(1, quickview.maxAttempts()); attempt++) {
+            if (state.form == null && !useBrowserPage(session, state)) {
+                open(session, state);
+            }
+            Exchange response = postSearch(state, jobName);
+            String problem = partialResponseProblem(response);
+            if (problem == null) {
+                remember(state, response.body());
+                return response.body();
+            }
+            lastProblem = problem;
+            if (state.usedPage != null) {
+                state.failedPage = state.usedPage;
+            }
+            log.info("[backend] Quick View session of '{}' is no longer valid ({}); logging in again",
+                    session.username(), problem);
+            state.reset();
+        }
+        throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-session",
+                "AutoSys Quick View did not accept the request: " + lastProblem);
     }
 
     /**
@@ -296,6 +327,44 @@ public class QuickViewClient {
         fields.put("value", "");
         fields.put("event", quickview.searchEvent());
         fields.put("partial", "true");
+
+        HttpPost post = new HttpPost(base.resolve(form.action()));
+        post.setHeader("Tr-XHR-Message", "true");
+        post.setHeader("Accept", "*/*");
+        post.setHeader("Origin", origin());
+        if (state.pageUrl != null) {
+            post.setHeader("Referer", state.pageUrl);
+        }
+        post.setEntity(new StringEntity(formBody(fields),
+                ContentType.APPLICATION_FORM_URLENCODED.withCharset(StandardCharsets.UTF_8)));
+        return send(state, post);
+    }
+
+    /**
+     * Expands the first row (the box) of the results tree. The form now holds the fields the search
+     * response added (tree table state and buttons), as the browser's page does.
+     */
+    private Exchange postExpand(State state, String boxName, String searchResponse) {
+        HtmlForms.Form form = state.form;
+        Map<String, String> fields = new LinkedHashMap<>(form.fields());
+        queryParams(form.action()).forEach(fields::putIfAbsent);
+        HtmlForms.Form updated = HtmlForms.find(searchResponse, quickview.form());
+        Map<String, String> added = updated != null ? updated.fields() : HtmlForms.inputs(searchResponse);
+        added.forEach((name, value) -> {
+            if (!name.equals(TRINIDAD_FORM)) {
+                fields.put(name, value);
+            }
+        });
+        fields.put(TRINIDAD_FORM, quickview.form());
+        fields.put(quickview.searchField(), boxName);
+        fields.putIfAbsent(quickview.boxTable() + ":_sm", "");
+        fields.put("source", quickview.boxTable());
+        fields.put("partialTargets", quickview.boxTable());
+        fields.put("partial", "true");
+        fields.put("state", "");
+        fields.put("value", "");
+        fields.put("event", quickview.expandEvent());
+        fields.put("path", "0");
 
         HttpPost post = new HttpPost(base.resolve(form.action()));
         post.setHeader("Tr-XHR-Message", "true");

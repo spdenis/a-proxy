@@ -1,5 +1,7 @@
 package com.testing.aproxy.webui;
 
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -17,7 +19,9 @@ import org.jspecify.annotations.Nullable;
  * What a Quick View job search response contains. Tables are recognised by their header
  * cells (not position or generated ids), as seen in WCC 11.x Quick View:
  * <ul>
- * <li>search results: Name, Box Name, Start Time, End Time, Status, Run, Priority, Exit Code</li>
+ * <li>search results: (Select,) Name, Box Name, Start Time, End Time, Status, Run, Priority, Exit Code; the
+ * Name cell starts with the job type icon ("Box (box)", "Command (cmd)") and, for a box, an expand icon. A
+ * box's results are a tree: once expanded, its direct jobs follow it, with long names shortened to "..."</li>
  * <li>job definition: Attribute Name, Attribute Value (rows without a value are section titles)</li>
  * <li>conditions of the job: Atomic Condition, Expected Value, Current Status, Condition Satisfied</li>
  * <li>jobs depending on it: Job Name, Condition, Condition Satisfied</li>
@@ -30,9 +34,24 @@ public record JobPage(List<JobRow> results, Map<String, String> attributes, List
 
     private static final Pattern STATUS_CODE = Pattern.compile("\\(([A-Z][A-Z_]+)\\)\\s*$");
     private static final Pattern NO_ROWS = Pattern.compile("(?i)no (results|data|rows|records)( found)?\\.?");
+    /* "[Select to expand|collapse] <type label> (<type code>) <name>" */
+    private static final Pattern NAME_CELL = Pattern.compile(
+            "^(?:Select to (?:expand|collapse)\\s+)?(?:(.+?)\\s+\\(([a-z][a-z0-9_]*)\\)\\s+)?(\\S.*)$");
+    private static final Pattern GO_TO = Pattern.compile("(?i)\\btitle\\s*=\\s*[\"']Go to ([^\"']+)[\"']");
+    private static final Pattern JOB_LINK = Pattern.compile("[?&;]jobName=([^&\"'#\\s]+)");
 
-    /** One row of the search results: the job's current status. */
-    public record JobRow(@Nullable String name, @Nullable String box, @Nullable String startTime,
+    public static final String BOX = "BOX";
+    public static final String REGULAR = "REGULAR";
+
+    /**
+     * One row of the search results: the job's current status.
+     *
+     * @param type    {@link #BOX} (can contain jobs) or {@link #REGULAR}; null when the row shows no type icon
+     * @param jobType AutoSys job type code, e.g. BOX, CMD, FW
+     * @param box     the box this job is in
+     */
+    public record JobRow(@Nullable String name, @Nullable String type, @Nullable String jobType,
+            @Nullable String box, @Nullable String startTime,
             @Nullable String endTime, @Nullable String status, @Nullable String statusText, @Nullable String run,
             @Nullable String priority, @Nullable String exitCode) {
     }
@@ -91,11 +110,15 @@ public record JobPage(List<JobRow> results, Map<String, String> attributes, List
                     }
                 }
             } else if (c.has("Box Name") && c.has("Status") && c.has("Exit Code")) {
-                for (List<String> row : rows(table)) {
+                for (List<HtmlTables.Cell> cells : cellRows(table)) {
+                    List<String> row = cells.stream().map(HtmlTables.Cell::text).toList();
                     String status = c.get(row, "Status");
-                    results.add(new JobRow(c.get(row, "Name"), c.get(row, "Box Name"), c.get(row, "Start Time"),
-                            c.get(row, "End Time"), statusCode(status), statusText(status), c.get(row, "Run"),
-                            c.get(row, "Priority"), c.get(row, "Exit Code")));
+                    int nameColumn = c.index("Name");
+                    String[] name = nameCell(c.get(row, "Name"),
+                            nameColumn < cells.size() ? cells.get(nameColumn).html() : "");
+                    results.add(new JobRow(name[0], name[1], name[2], c.get(row, "Box Name"),
+                            c.get(row, "Start Time"), c.get(row, "End Time"), statusCode(status), statusText(status),
+                            c.get(row, "Run"), c.get(row, "Priority"), c.get(row, "Exit Code")));
                 }
             } else if (c.has("Required") && c.has("Machine") && c.has("Type")) {
                 for (List<String> row : rows(table)) {
@@ -136,8 +159,41 @@ public record JobPage(List<JobRow> results, Map<String, String> attributes, List
 
     private static JobRow withName(JobRow r, String name) {
         return r.name() != null ? r
-                : new JobRow(name, r.box(), r.startTime(), r.endTime(), r.status(), r.statusText(), r.run(),
-                        r.priority(), r.exitCode());
+                : new JobRow(name, r.type(), r.jobType(), r.box(), r.startTime(), r.endTime(), r.status(),
+                        r.statusText(), r.run(), r.priority(), r.exitCode());
+    }
+
+    /** The jobs directly in a box, as listed once the box is expanded (the box's own row excluded). */
+    public List<JobRow> jobsIn(String boxName) {
+        return results.stream()
+                .filter(r -> boxName.equalsIgnoreCase(r.box()) && !boxName.equalsIgnoreCase(r.name()))
+                .toList();
+    }
+
+    /**
+     * Name, type and type code from a Name cell: the full name from the job link (the text may be
+     * shortened), the type from its icon.
+     */
+    static @Nullable String[] nameCell(@Nullable String text, String html) {
+        String name = null;
+        String code = null;
+        if (text != null) {
+            Matcher m = NAME_CELL.matcher(text);
+            if (m.matches()) {
+                code = m.group(2);
+                name = m.group(3).strip();
+            }
+        }
+        Matcher title = GO_TO.matcher(html);
+        Matcher link = JOB_LINK.matcher(html);
+        if (title.find()) {
+            name = HtmlTables.text(title.group(1));
+        } else if (link.find()) {
+            name = URLDecoder.decode(HtmlTables.text(link.group(1)), StandardCharsets.UTF_8);
+        }
+        String jobType = code == null ? null : code.toUpperCase(Locale.ROOT);
+        String type = jobType == null ? null : jobType.equals(BOX) ? BOX : REGULAR;
+        return new String[] {name, type, jobType};
     }
 
     /** {@code "Success (SUCCESS)"} gives SUCCESS, {@code "On Ice"} gives ON_ICE. */
@@ -159,19 +215,23 @@ public record JobPage(List<JobRow> results, Map<String, String> attributes, List
             return null;
         }
         String t = text.strip().toLowerCase(Locale.ROOT);
-        if (t.matches("(no|false|n|not\\b.*|un\\w*)")) {
+        if (t.matches("(no|false|n|not\\b.*|un\\w*)") || t.matches(".*\\bnot (satisfied|met)\\b.*")) {
             return false;
         }
-        if (t.matches("(yes|true|y|satisfied|met|ok)")) {
+        if (t.matches("(yes|true|y|satisfied|met|ok)") || t.matches(".*\\b(satisfied|met)\\b.*")) {
             return true;
         }
         return null;
     }
 
     private static List<List<String>> rows(HtmlTables.Table table) {
-        return table.dataRows().stream()
-                .filter(r -> !(r.stream().filter(t -> !t.isBlank()).count() == 1
-                        && r.stream().anyMatch(t -> NO_ROWS.matcher(t.strip()).matches())))
+        return cellRows(table).stream().map(r -> r.stream().map(HtmlTables.Cell::text).toList()).toList();
+    }
+
+    private static List<List<HtmlTables.Cell>> cellRows(HtmlTables.Table table) {
+        return table.dataCells().stream()
+                .filter(r -> !(r.stream().filter(c -> !c.text().isBlank()).count() == 1
+                        && r.stream().anyMatch(c -> NO_ROWS.matcher(c.text().strip()).matches())))
                 .toList();
     }
 

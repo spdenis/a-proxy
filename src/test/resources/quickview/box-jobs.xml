@@ -1,0 +1,15 @@
+<?xml version="1.0" ?>
+<content action="/wcc/quickview/pages/main.jsf?AntiXSRFToken=XSRF-1&amp;conversationContext=1">
+<fragment><![CDATA[<span id="tr_headerForm_Postscript"><input type="hidden" name="javax.faces.ViewState" value="!VS-3"></span>]]></fragment>
+<fragment><![CDATA[<div id="pageMessages"></div>]]></fragment>
+<fragment><![CDATA[<div id="boxJobResultTable"><input type="hidden" name="boxJobResultTable:_us" value="0"><input type="hidden" name="boxJobResultTable:_us" value="1"><input type="hidden" name="boxJobResultTable:_us" value="2">
+<table class="af_table_content" summary="Search Results"><tr><th>Select</th><th>Name</th><th>Box Name</th><th>Start Time</th><th>End Time</th><th>Status</th><th>Run</th><th>Priority</th><th>Exit Code</th></tr>
+<tr><td><img alt="Select"></td><td><table summary=""><tr><td><a href="#"><img alt="Select to collapse"></a></td><td><img alt="Box (box)"></td><td><a class="OraLink" href="main.jsf?serverName=QA5&amp;displayMode=standalone&amp;AntiXSRFToken=XSRF-1&amp;jobName=TEST_BOX"><span title="Go to TEST_BOX">TEST_BOX</span></a></td></tr></table></td>
+<td></td><td>Oct 24, 2026 10:00:14 AM</td><td>Oct 24, 2026 10:02:47 AM</td><td><img title="Success" alt="Success (SUCCESS)"></td><td>711442132</td><td></td><td>0</td></tr>
+<tr><td><img alt="Select"></td><td><table summary=""><tr><td><img alt="Command (cmd)"></td><td><a class="OraLink" href="main.jsf?serverName=QA5&amp;displayMode=standalone&amp;AntiXSRFToken=XSRF-1&amp;jobName=TEST_STOP_A"><span title="Go to TEST_STOP_A">TEST_STOP_A</span></a></td></tr></table></td>
+<td>TEST_BOX</td><td>Oct 24, 2026 10:00:20 AM</td><td>Oct 24, 2026 10:00:30 AM</td><td><img title="Success" alt="Success (SUCCESS)"></td><td>711442132</td><td></td><td>0</td></tr>
+<tr><td><img alt="Select"></td><td><table summary=""><tr><td><a href="#"><img alt="Select to expand"></a></td><td><img alt="Box (box)"></td><td><a class="OraLink" href="main.jsf?serverName=QA5&amp;displayMode=standalone&amp;AntiXSRFToken=XSRF-1&amp;jobName=TEST_SUB_BOX_WITH_A_LONG_NAME"><span title="Go to TEST_SUB_BOX_WITH_A_LONG_NAME">TEST_SUB_BOX_WITH_A_LO...</span></a></td></tr></table></td>
+<td>TEST_BOX</td><td>Oct 24, 2026 10:00:19 AM</td><td>Oct 24, 2026 10:01:10 AM</td><td><img title="Failure" alt="Failure (FAILURE)"></td><td>711442132</td><td></td><td>1</td></tr></table>
+<input type="hidden" name="boxJobResultTable:rangeStart" value="0"></div>]]></fragment>
+<fragment><![CDATA[<span id="tr_jobDetailsForm_Postscript"><input type="hidden" name="javax.faces.ViewState" value="!VS-3"></span>]]></fragment>
+</content>
