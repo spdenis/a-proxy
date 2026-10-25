@@ -39,6 +39,7 @@ public final class ProxySession {
     private volatile @Nullable String browserUserAgent;
     private volatile @Nullable String xsrfToken;
     private volatile Instant lastUsedAt;
+    private volatile @Nullable String lastJob;
     private volatile SessionState state = SessionState.ACTIVE;
 
     ProxySession(String username, String tokenHash, CredentialVault.SealedSecret credentials,
@@ -118,6 +119,15 @@ public final class ProxySession {
             }
         });
         return added;
+    }
+
+    /** The job this session looked up last through the API (used by the keep-alive). */
+    public @Nullable String lastJob() {
+        return lastJob;
+    }
+
+    public void rememberJob(String jobName) {
+        lastJob = jobName;
     }
 
     /** The browser's latest Quick View form submit, if any. */

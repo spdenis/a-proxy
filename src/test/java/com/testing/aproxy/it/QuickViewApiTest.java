@@ -56,12 +56,17 @@ class QuickViewApiTest {
         registry.add("autosys.webui.login.password-field", () -> "password");
         registry.add("autosys.webui.login.success.statuses", () -> "200");
         registry.add("autosys.proxy.start-page", () -> "/ui/Login.html");
+        // not scheduled (disabled); the test runs it by hand
+        registry.add("autosys.keep-alive.job", () -> "TEST_FX_LOADER");
     }
 
     @LocalServerPort
     int port;
 
     BrowserClient browser;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    com.testing.aproxy.webui.KeepAliveTask keepAlive;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -522,6 +527,16 @@ class QuickViewApiTest {
                         "Authorization", "Bearer " + token)
                 : browser.post("/api/v1/jobs/" + job + "/actions", "application/json", body,
                         "Authorization", "Bearer " + token, "Idempotency-Key", key);
+    }
+
+    @Test
+    void keepAliveRequestsAJobStatusUnlessTheSessionWasJustUsed() throws Exception {
+        login();
+        assertThat(keepAlive.runOnce()).isEqualTo(1);
+        autosys.verify(1, postRequestedFor(urlEqualTo(SEARCH)).withRequestBody(containing("jobNameInput=TEST_FX_LOADER&")));
+        // the session just talked to AutoSys: nothing to keep alive yet
+        assertThat(keepAlive.runOnce()).isZero();
+        autosys.verify(1, postRequestedFor(urlEqualTo(SEARCH)));
     }
 
     @Test

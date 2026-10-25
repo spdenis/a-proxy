@@ -123,6 +123,11 @@ public class SessionRegistry {
         sessions.invalidate(session.tokenHash());
     }
 
+    /** The open sessions, without counting as a use of them (their idle time keeps running). */
+    public List<ProxySession> active() {
+        return sessions.asMap().values().stream().filter(s -> s.state() != SessionState.CLOSED).toList();
+    }
+
     public long activeCount() {
         sessions.cleanUp();
         return sessions.estimatedSize();

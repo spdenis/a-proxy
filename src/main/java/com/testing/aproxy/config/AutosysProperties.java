@@ -33,7 +33,24 @@ public record AutosysProperties(
         @Valid @DefaultValue Token token,
         @Valid @DefaultValue Webui webui,
         @Valid @DefaultValue Actions actions,
+        @Valid @DefaultValue KeepAlive keepAlive,
         @Valid @DefaultValue Capture capture) {
+
+    /**
+     * Background job status requests that keep each session's AutoSys (Quick View) session from timing
+     * out while the API is not used. Off by default.
+     */
+    public record KeepAlive(
+            @DefaultValue("false") boolean enabled,
+            /* Time between two requests of a session; skipped when the session talked to AutoSys more recently. */
+            @DefaultValue("3m") Duration interval,
+            /* Job whose status is requested; empty = the job the session looked up last. */
+            @Nullable String job) {
+
+        public KeepAlive {
+            job = blankToNull(job);
+        }
+    }
 
     /** Job actions ({@code POST /api/v1/jobs/{name}/actions}): force start and other job events. */
     public record Actions(

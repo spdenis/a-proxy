@@ -99,6 +99,8 @@ public class QuickViewClient {
         HtmlForms.@Nullable Form form;
         @Nullable String pageUrl;
         @Nullable String userAgent;
+        /* when this session last sent a request to AutoSys */
+        volatile long lastSentNanos;
 
         void reset() {
             cookies.clear();
@@ -448,6 +450,27 @@ public class QuickViewClient {
         return s.length() > max ? s.substring(0, max - 3) + "..." : s;
     }
 
+    /**
+     * Searches a job to keep the session's AutoSys session alive, unless the session is busy (another call
+     * holds its lock) or sent a request to AutoSys within {@code quietFor}. Returns whether it searched.
+     */
+    public boolean keepAlive(ProxySession session, String jobName, Duration quietFor) {
+        if (!session.lock().tryLock()) {
+            return false;
+        }
+        try {
+            State existing = states.getIfPresent(session);
+            if (existing != null && existing.lastSentNanos != 0
+                    && System.nanoTime() - existing.lastSentNanos < quietFor.toNanos()) {
+                return false;
+            }
+            search(session, state(session), jobName);
+            return true;
+        } finally {
+            session.lock().unlock();
+        }
+    }
+
     private State state(ProxySession session) {
         State state = states.get(session, s -> new State());
         state.userAgent = session.browserUserAgent();
@@ -783,6 +806,7 @@ public class QuickViewClient {
         request.setHeader("Accept-Language", "en-US,en;q=0.8");
         request.setHeader("Accept-Encoding", "identity");
         long started = System.nanoTime();
+        state.lastSentNanos = started;
         try {
             Exchange exchange = http.execute(request, response -> {
                 List<String> setCookies = Arrays.stream(response.getHeaders("Set-Cookie")).map(Header::getValue)

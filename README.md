@@ -177,6 +177,30 @@ request). When the answer is not a partial-page response (session expired, redir
 
 Set `logging.level.com.testing.aproxy.webui=DEBUG` to see each request the proxy makes to AutoSys (paths only).
 
+### Keep-alive (optional)
+
+AutoSys ends an unused session after a while, and the next API call then has to open Quick View again (or fails
+until you reload Quick View in the browser). With
+
+```properties
+autosys.keep-alive.enabled=true
+autosys.keep-alive.interval=3m
+# autosys.keep-alive.job=SOME_HARMLESS_JOB
+```
+
+the proxy requests a job's status for every open session at each interval. The job is `keep-alive.job`, else the job
+the session looked up last through the API, else the job the browser last searched for in Quick View. A session with
+no job yet is skipped.
+
+Sessions are also skipped when:
+- they are busy with another call;
+- they talked to AutoSys within the interval.
+
+The keep-alive does not count as using the proxy session: tokens still expire after `autosys.session.idle-ttl`.
+
+A failure is logged at INFO once per session, until it works again. Each request is logged at DEBUG
+(`com.testing.aproxy.webui`).
+
 ### Job actions: force start
 
 ```bash

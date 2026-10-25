@@ -136,6 +136,7 @@ public class JobController {
             throw new BackendException(HttpStatus.NOT_FOUND, "job-not-found", "No job named " + name
                     + (page.results().isEmpty() ? "" : " (the search matched " + page.results().size() + " other jobs)"));
         }
+        session.rememberJob(page.attributes().get("Name"));
         return page;
     }
 

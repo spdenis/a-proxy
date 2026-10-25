@@ -91,6 +91,12 @@ autosys:
     idempotency-ttl: 10m          # results of requests with an Idempotency-Key header are replayed this long
     read-status-after: true       # search the job again after the action to report its status
 
+  # Request a job's status in the background so AutoSys sessions do not time out between API calls
+  keep-alive:
+    enabled: false
+    interval: 3m                  # per session; skipped when the session used AutoSys more recently
+    job:                          # job to ask for; empty = the job the session looked up last
+
   # Record AutoSys UI traffic (secrets masked) to learn its internal endpoints. Development only.
   capture:
     enabled: false
