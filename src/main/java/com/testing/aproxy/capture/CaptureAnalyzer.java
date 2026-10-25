@@ -155,12 +155,18 @@ public final class CaptureAnalyzer {
 
     String analyze(Path dir, Pattern only, boolean brief) throws IOException {
         List<JsonNode> captures = new ArrayList<>();
-        try (Stream<Path> files = Files.list(dir)) {
-            for (Path file : files.filter(f -> f.getFileName().toString().matches("\\d+-.*\\.json")).sorted().toList()) {
+        List<String> skipped = new ArrayList<>();
+        int files;
+        try (Stream<Path> list = Files.list(dir)) {
+            List<Path> jsonFiles = list.filter(f -> f.getFileName().toString().matches("\\d+-.*\\.json")).sorted().toList();
+            files = jsonFiles.size();
+            for (Path file : jsonFiles) {
                 try {
                     captures.add(JSON.readTree(file.toFile()));
                 } catch (RuntimeException e) {
-                    // skip unreadable file
+                    String reason = String.valueOf(e.getMessage()).lines().findFirst().orElse("");
+                    skipped.add(file.getFileName() + ": " + e.getClass().getSimpleName() + " "
+                            + (reason.length() > 120 ? reason.substring(0, 120) + "..." : reason));
                 }
             }
         }
@@ -178,8 +184,14 @@ public final class CaptureAnalyzer {
         }
 
         StringBuilder out = new StringBuilder();
-        out.append("CAPTURE SUMMARY ").append(dir.getFileName()).append("  requests=").append(timeline.size())
-                .append("  endpoints=").append(endpoints.size()).append('\n');
+        out.append("CAPTURE SUMMARY ").append(dir.getFileName()).append("  files=").append(files)
+                .append("  requests=").append(timeline.size()).append("  endpoints=").append(endpoints.size())
+                .append(only != null ? "  (--only=" + only.pattern() + ")" : "").append('\n');
+        out.append("(an endpoint is one method + URL; its requests are listed by seq in the timeline)\n");
+        if (!skipped.isEmpty()) {
+            out.append("== UNREADABLE FILES (").append(skipped.size()).append(", not analyzed)\n");
+            skipped.forEach(line -> out.append("  ").append(line).append('\n'));
+        }
         out.append("== TIMELINE (seq:endpoint, !=login-like, x=error)\n");
         wrap(out, String.join(" ", timeline), 100);
         out.append("== ENDPOINTS\n");

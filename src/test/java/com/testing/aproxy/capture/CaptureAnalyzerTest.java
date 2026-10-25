@@ -39,10 +39,15 @@ class CaptureAnalyzerTest {
         capture(7, "GET", "/ui/rest/jobs", "{\"name\":\"X\"}", null, "null", "{}", 302, null,
                 "{\"Location\":\"https://host:8443/ui/Login.html?expired=1\"}", "null");
 
+        // e.g. written while the proxy stopped: reported, not silently left out
+        Files.writeString(dir.resolve("0008-GET-ui-broken.json"), "{\"seq\":8,\"request\":{");
+
         String summary = new CaptureAnalyzer(3, true).analyze(dir, null, false);
 
         assertThat(summary)
-                .contains("requests=7  endpoints=5")
+                .contains("files=8  requests=7  endpoints=5")
+                .contains("== UNREADABLE FILES (1, not analyzed)")
+                .contains("0008-GET-ui-broken.json: ")
                 .contains("1:E1 2:E2 3:E3 4:E3 5:E4 6:E5 7:E2!")
                 .contains("[E1] POST /authentication/login  x1  status=200  req=form  res=json")
                 .contains("[E2] GET /ui/rest/jobs  x2  status=200 | 302  res=json  !LOGIN-LIKE")
