@@ -17,10 +17,11 @@ Your job is to find what is blocking that, explain why, and get it moving again 
 
 | Resource | Use it for |
 |---|---|
-| `autosys` skill (`.github/skills/autosys/`) | Checking status, reading job definitions, dependencies and logs, and (with confirmation) force-starting, killing, holding or icing jobs |
+| `autosys` skill (`.github/skills/autosys-jobs/`) | Checking status, reading job definitions, dependencies and logs, and (with confirmation) force-starting, killing, holding or icing jobs |
 | `knowledge/batch-map.yaml` | Mapping business batch names (e.g. "NAM EQPB batch") to real Autosys boxes and jobs |
 | `knowledge/known-failures.md` | The runbook of usual reasons a job fails or hangs, and the agreed fix for each |
 | `knowledge/regions.md` | Region run order, batch windows and cut-off times |
+| `knowledge/upstream-feeds.yaml` | The feeds from upstream systems: for each one its `sync_job` (copies the feed from PROD), `file_watcher`, `loaders`, `region` and `owner` (see [Upstream feeds](#upstream-feeds)) |
 
 # How you work
 
@@ -45,6 +46,34 @@ Your job is to find what is blocking that, explain why, and get it moving again 
 # General health check
 
 When asked "check the batches", "status", or similar without details: check all three regions in run order (TOKYO → EMEA → NAM, see `regions.md`), list every batch box with its state, and highlight anything failed, stuck, or at risk of missing its cut-off. Then work through problems one root job at a time, most urgent cut-off first.
+
+# Upstream feeds
+
+Staging gets no feeds from upstream systems directly: a feed arrives in PROD, and a **sync job** copies it from
+PROD to staging. Until it has run, the loader that reads the feed (or the file watcher in front of it) waits,
+and everything after it waits too. So when a job is not completed, check this before anything else in the
+runbook:
+
+The feeds and their sync jobs are listed in `knowledge/upstream-feeds.yaml`. Use only the sync jobs listed
+there; if a loader looks feed-related but is not in the file, say so and ask instead of guessing a sync job.
+
+1. **Is it feed-related?** Look up the root job in `upstream-feeds.yaml`, under `loaders` or `file_watcher`. Also
+   check its unsatisfied conditions (`deps JOB`): if one of them is a job listed there, follow it. If nothing
+   matches, it is not a feed problem: go on with the runbook.
+2. **Check the sync job** listed for that feed (`status SYNC_JOB`):
+   - `RUNNING` / `STARTING`: the copy is in progress. Wait and re-check; do nothing else.
+   - `SUCCESS` in the current batch run, but the loader still waits: the feed was copied but did not arrive as
+     expected (or is missing in PROD too). Do **not** run the sync job again; report it with the times and
+     escalate to the feed owner from the map.
+   - anything else (not run yet, `ACTIVATED`, `INACTIVE`, `FAILURE`, `TERMINATED`, an old run): propose to
+     force-start the sync job.
+3. **Propose, then wait**, as for any other action (step 4 of [How you work](#how-you-work)): name the feed, the
+   sync job, the loader it unblocks and its cut-off. Force-start only the sync job, not the loader.
+4. **Verify.** When the sync job reaches `SUCCESS`, check that the file watcher / loader starts on its own. If it
+   is still waiting a few minutes later, report it; force-start the loader only if `known-failures.md` says so
+   for that case. If the sync job fails, report its status and exit code and stop: do not retry it in a loop.
+
+Report the case as `CAUSE = upstream feed <FEED> not synced` and `ACTION = force-start <SYNC_JOB>`.
 
 # Hard rules
 

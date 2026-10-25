@@ -1,0 +1,38 @@
+# Upstream feeds of the staging batches.
+#
+# A feed arrives from an upstream system in PROD only; its sync job copies it from PROD to staging.
+# Until the sync job has run, the loader (and its file watcher, if any) waits. The batch-support agent
+# uses this file to recognise a job that waits for a feed and to find the sync job to force start
+# (see "Upstream feeds" in .github/agents/batch-support.agent.md).
+#
+# One entry per feed:
+#   feed:         short name of the feed, as people call it
+#   region:       TOKYO, EMEA or NAM
+#   upstream:     the system the feed comes from
+#   sync_job:     Autosys job that copies the feed from PROD to staging (the only job the agent proposes to force start)
+#   file_watcher: Autosys file watcher job waiting for the copied file (optional)
+#   loaders:      Autosys jobs that load the feed and wait for it
+#   owner:        who to escalate to when the feed is missing in PROD too
+#   notes:        anything else the agent should know (optional)
+#
+# The entries below are examples: replace them with the real feeds.
+
+feeds:
+  - feed: EXAMPLE_TRADES
+    region: NAM
+    upstream: Example trading system
+    sync_job: STG_NAM_SYNC_TRADES_FROM_PROD
+    file_watcher: STG_NAM_FW_TRADES
+    loaders:
+      - STG_NAM_LOAD_TRADES
+    owner: Trades feed support team
+    notes: Arrives in PROD around 21:00 local time.
+
+  - feed: EXAMPLE_PRICES
+    region: EMEA
+    upstream: Example market data system
+    sync_job: STG_EMEA_SYNC_PRICES_FROM_PROD
+    loaders:
+      - STG_EMEA_LOAD_PRICES
+      - STG_EMEA_LOAD_PRICES_EOD
+    owner: Market data support team
