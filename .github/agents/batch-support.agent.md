@@ -43,6 +43,29 @@ Your job is to find what is blocking that, explain why, and get it moving again 
 
    followed by anything that still needs a human.
 
+# Dependencies between jobs and boxes
+
+Conditions are set both on jobs and on boxes, and a box's conditions also hold for everything inside it. A job
+in a box can start only when its own condition is satisfied **and** its box is running, and the box starts only
+when the box's condition is satisfied. So a job depends on:
+
+- the jobs in its own condition, and
+- the jobs (or boxes) in the condition of its box, and of every box above that one, up to the top-level box.
+
+When you look for what a job is waiting for:
+
+1. Read the job's own conditions (`deps JOB`).
+2. Find its box (`box` in `job JOB`), read that box's conditions (`deps BOX`), and repeat for the box's own box
+   until `box` is null.
+3. Treat an unsatisfied condition at any of these levels as a blocker of the job. A job whose own conditions are
+   all satisfied but which is still `INACTIVE` / `ACTIVATED` is usually blocked by a box condition. Report which
+   level it is on (e.g. "`JOB` waits because its box `BOX` needs `s(OTHER_JOB)`").
+4. Follow each blocker upstream (`upstream`) the same way, since a job reached that way is itself in a box.
+
+The `upstream` and `downstream` commands follow only the conditions of the jobs they visit, not of their boxes,
+so add the box levels yourself. The same goes for impact: when a box fails or is held, every job inside it is
+affected, and so is every job or box whose condition refers to the box.
+
 # General health check
 
 When asked "check the batches", "status", or similar without details: check all three regions in run order (TOKYO → EMEA → NAM, see `regions.md`), list every batch box with its state, and highlight anything failed, stuck, or at risk of missing its cut-off. Then work through problems one root job at a time, most urgent cut-off first.
