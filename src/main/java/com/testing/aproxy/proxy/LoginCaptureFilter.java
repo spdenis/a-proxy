@@ -379,7 +379,9 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
         String cookies = withSetCookies(HeaderRewriter.stripOwnCookies(header, PendingTokenStore.OWN_COOKIE_PREFIX),
                 response.getHeaders(HttpHeaders.SET_COOKIE));
         boolean first = session.quickViewPage() == null;
-        session.rememberQuickViewPage(new BrowserPage(form.action(), form.fields(), cookies, Instant.now()));
+        String query = request.getQueryString();
+        session.rememberQuickViewPage(new BrowserPage(form.action(), form.fields(), cookies,
+                quickViewPath(request) + (query == null ? "" : "?" + query), Instant.now()));
         log.info("[backend] API calls of '{}' will use the Quick View page the browser {}opened ({} fields)",
                 session.username(), first ? "" : "re", form.fields().size());
     }
@@ -413,6 +415,20 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
         return ProxyPaths.pathOf(request).substring(paths.prefix().length()).split(";", 2)[0];
     }
 
+    /** AutoSys-relative path and query of the page a request was sent from (its Referer), if it is a Quick View page. */
+    private @Nullable String refererPage(HttpServletRequest request) {
+        String referer = request.getHeader(HttpHeaders.REFERER);
+        if (referer == null) {
+            return null;
+        }
+        String page = referer.replaceFirst("^[a-zA-Z][a-zA-Z0-9+.-]*://[^/]*", "").split("#", 2)[0];
+        if (!paths.prefix().isEmpty() && page.startsWith(paths.prefix())) {
+            page = page.substring(paths.prefix().length());
+        }
+        page = page.replaceFirst(";jsessionid=[^?]*", "");
+        return page.split("\\?", 2)[0].equals(quickview.pagePath()) ? page : null;
+    }
+
     /** A Quick View form submit (search, refresh): keep where it went and what it sent. */
     private void rememberQuickViewPage(HttpServletRequest request, ProxySession session, String cookieHeader) {
         if (!quickview.reuseBrowserPage() || !"POST".equalsIgnoreCase(request.getMethod())) {
@@ -439,7 +455,7 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
         String strippedCookies = HeaderRewriter.stripOwnCookies(cookieHeader, PendingTokenStore.OWN_COOKIE_PREFIX);
         boolean first = session.quickViewPage() == null;
         session.rememberQuickViewPage(new BrowserPage(path + (query == null ? "" : "?" + query), fields,
-                strippedCookies == null ? "" : strippedCookies, Instant.now()));
+                strippedCookies == null ? "" : strippedCookies, refererPage(request), Instant.now()));
         if (first) {
             log.info("[backend] API calls of '{}' will use the browser's Quick View page ({} fields)",
                     session.username(), fields.size());

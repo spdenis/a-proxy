@@ -1,13 +1,13 @@
 ---
 name: autosys-jobs
-description: Look up AutoSys jobs through the local AutoSys proxy API - job status, definition, run history, conditions (what a job depends on), dependents (which jobs depend on it), jobs inside a box, and multi-level dependency chains or box trees. Use when the user asks about an AutoSys job, box, its status, dependencies, dependents, runs or failures.
+description: Look up AutoSys jobs through the local AutoSys proxy API - job status, definition, run history, conditions (what a job depends on), dependents (which jobs depend on it), jobs inside a box, and multi-level dependency chains or box trees; and force-starting a job when the user explicitly asks for it. Use when the user asks about an AutoSys job, box, its status, dependencies, dependents, runs or failures, or asks to force start a job.
 ---
 
 # AutoSys jobs via the AutoSys proxy
 
-The AutoSys proxy (running locally, default `http://localhost:8080`) answers a read-only REST API by
-reading WCC Quick View with the user's own AutoSys session. Use it for every question about AutoSys jobs;
-never guess job data.
+The AutoSys proxy (running locally, default `http://localhost:8080`) answers a REST API by driving WCC
+Quick View with the user's own AutoSys session. Use it for every question about AutoSys jobs; never guess job
+data. Everything is read-only except `force-start` (see [Force start](#force-start)).
 
 ## Setup
 
@@ -44,6 +44,7 @@ problem (printed as JSON), 2 = setup problem (message on stderr).
 | full upstream chain, "everything JOB needs before it can start", root cause of a job not starting | `upstream JOB [-Depth N]` |
 | everything inside a box including nested boxes, "which jobs in BOX failed" | `tree BOX [-Depth N]` |
 | who am I / token expiry | `session` |
+| "force start JOB" (only on an explicit request, after confirming; see below) | `force-start JOB -Comment "<reason>"` |
 
 Traversals make one API call per job (each takes a moment, because AutoSys Quick View is behind it). The
 defaults are `-Depth 5` and `-MaxJobs 100`. Start with the defaults; if the result says `"truncated": true`,
@@ -56,7 +57,8 @@ curl.exe -s -H "Authorization: Bearer %AUTOSYS_PROXY_TOKEN%" http://localhost:80
 ```
 
 Endpoints: `GET /api/v1/jobs/{name}`, `/{name}/status`, `/{name}/dependencies`, `/{name}/runs`,
-`/{name}/jobs`, `GET /api/v1/jobs?name=<pattern>`, `GET /api/v1/session`.
+`/{name}/jobs`, `GET /api/v1/jobs?name=<pattern>`, `GET /api/v1/session`;
+`POST /api/v1/jobs/{name}/actions` with `{"action":"FORCE_STARTJOB","comment":"..."}`.
 
 ## What the results mean
 
@@ -93,6 +95,24 @@ Endpoints: `GET /api/v1/jobs/{name}`, `/{name}/status`, `/{name}/dependencies`, 
   satisfied, then follow them with `upstream` if needed.
 - Report `errors` and `truncated` from traversals instead of leaving them out.
 
+## Force start
+
+`force-start` changes AutoSys: it starts the job right away, whatever its conditions. So:
+
+- Run it only when the user explicitly asks to force start a job, never as a step of answering another question
+  (e.g. "why hasn't JOB started" is answered, not fixed), and never for several jobs in a loop.
+- Before running it, show the job's current status (`status JOB`) and ask the user to confirm with the exact job
+  name ("Force start TEST_JOB now? It is ACTIVATED."). Run it only after a clear yes in the user's next message.
+  Pass the user's reason as `-Comment` if they gave one (it goes to the proxy's audit log).
+- Run it once. The result has `outcome`:
+  - `ACCEPTED`: AutoSys took the event. Report `statusAfter` (e.g. `STARTING`, `RUNNING`) and `autosysMessage`.
+  - `REJECTED` (409 `autosys-action-rejected`): AutoSys refused it (e.g. no permission, or the job's menu does not
+    offer it); nothing happened. Show `autosysMessage`.
+  - `UNKNOWN` (502 `autosys-action-unknown`): the event was confirmed but the answer was unclear; it may have
+    run. Do **not** retry: check `status JOB` and tell the user what you see.
+- Other errors (`autosys-session`, `autosys-unexpected-response`, ...) say "the event was not sent" in `detail`:
+  nothing happened, and it is safe to try once more if the user wants.
+
 ## Errors
 
 The API returns `application/problem+json` with `type` and `detail`:
@@ -103,6 +123,9 @@ The API returns `application/problem+json` with `type` and `detail`:
 | 400 `invalid-job-name` | Not a valid AutoSys job name (letters, digits, `_ - . #`). |
 | 404 `job-not-found` | No such job (`detail` may say the search matched other jobs: offer `search`). |
 | 409 `not-a-box` | `jobs` / `tree` on a regular job: answer with `job` instead. |
+| 409 `autosys-action-rejected`, 502 `autosys-action-unknown` | See [Force start](#force-start). |
+| 429 `rate-limited` | Too many actions in a minute: wait, do not loop. |
+| 403 `actions-disabled` | Actions are switched off on this proxy. |
 | 502 `autosys-quickview` | The proxy could not open Quick View: open Quick View in the browser through the proxy (`http://localhost:8080`), then retry. |
 | 502 `autosys-session`, `autosys-unreachable`, `autosys-login` | AutoSys did not answer as expected: retry once; if it fails again, show the `detail` to the user. |
 
@@ -110,6 +133,6 @@ If the proxy is not reachable at all, tell the user to start it (`./gradlew boot
 
 ## Limits
 
-- The API is read-only: it cannot start, force-start, kill, hold or ice jobs. If asked to, say so and suggest
-  doing it in the AutoSys UI.
+- The only change the API makes is force start. It cannot start, kill, hold or ice jobs or change
+  definitions: if asked to, say so and suggest doing it in the AutoSys UI.
 - Only jobs the user's AutoSys account can see in Quick View are returned.

@@ -73,6 +73,23 @@ autosys:
       entry-referer: /wcc/ui/Launcher.html
       box-table: boxJobResultTable  # results tree of a box; expanding its first row lists the box's jobs
       expand-event: show
+      # job events: choose one in the dropdown (partial-page event), press Go, confirm in the dialog
+      event-select: jobResultTable:eventId
+      event-button: jobResultTable:sendEventButton
+      event-ids:                    # dropdown values, when the page does not list the options' labels
+        FORCE_STARTJOB: "1"
+      confirmation-path: /wcc/quickview/pages/dialog/confirmationDialog.jsf
+      confirmation-form: confirmationDialog
+      confirm-button: sendEvtYes
+      dialog-params: [AntiXSRFToken, OWASP-CSRFTOKEN, conversationContext]  # from the page URL if missing
+      messages-id: pageMessages
+
+  # POST /api/v1/jobs/{name}/actions (only in allowed-environments: the proxy refuses to start elsewhere)
+  actions:
+    enabled: true
+    rate-limit-per-minute: 30     # per session
+    idempotency-ttl: 10m          # results of requests with an Idempotency-Key header are replayed this long
+    read-status-after: true       # search the job again after the action to report its status
 
   # Record AutoSys UI traffic (secrets masked) to learn its internal endpoints. Development only.
   capture:

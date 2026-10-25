@@ -32,7 +32,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class JobController {
 
     /** AutoSys job names: letters, digits and {@code _ - . #}; searches may also use {@code * %}. */
-    private static final Pattern JOB_NAME = Pattern.compile("[A-Za-z0-9_.#-]{1,128}");
+    static final Pattern JOB_NAME = Pattern.compile("[A-Za-z0-9_.#-]{1,128}");
     private static final Pattern JOB_SEARCH = Pattern.compile("[A-Za-z0-9_.#*%-]{1,128}");
 
     private static final Logger log = LoggerFactory.getLogger(JobController.class);
@@ -139,7 +139,7 @@ public class JobController {
         return page;
     }
 
-    private static BackendException invalidName(String name) {
+    static BackendException invalidName(String name) {
         return new BackendException(HttpStatus.BAD_REQUEST, "invalid-job-name",
                 "Not a valid AutoSys job name: " + (name.length() > 40 ? name.substring(0, 40) + "..." : name));
     }

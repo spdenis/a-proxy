@@ -3,6 +3,7 @@ package com.testing.aproxy.config;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import jakarta.validation.Valid;
@@ -31,7 +32,19 @@ public record AutosysProperties(
         @Valid @DefaultValue Http http,
         @Valid @DefaultValue Token token,
         @Valid @DefaultValue Webui webui,
+        @Valid @DefaultValue Actions actions,
         @Valid @DefaultValue Capture capture) {
+
+    /** Job actions ({@code POST /api/v1/jobs/{name}/actions}): force start and other job events. */
+    public record Actions(
+            @DefaultValue("true") boolean enabled,
+            /* Actions per session and minute; more are answered with 429. */
+            @DefaultValue("30") int rateLimitPerMinute,
+            /* How long the result of a request with an Idempotency-Key is kept and replayed. */
+            @DefaultValue("10m") Duration idempotencyTtl,
+            /* Search the job once more after an action, to report its status. */
+            @DefaultValue("true") boolean readStatusAfter) {
+    }
 
     /**
      * Records proxied AutoSys requests/responses (secrets masked) to files, to learn the
@@ -144,10 +157,31 @@ public record AutosysProperties(
             @DefaultValue("/wcc/ui/Launcher.html") String entryReferer,
             /* Tree table that lists a box with its jobs, and the Trinidad event that expands a row of it. */
             @DefaultValue("boxJobResultTable") String boxTable,
-            @DefaultValue("show") String expandEvent) {
+            @DefaultValue("show") String expandEvent,
+            /*
+             * Job events (force start, ...): the dropdown of the results table, chosen with a partial-page
+             * event, and the Go button next to it.
+             */
+            @DefaultValue("jobResultTable:eventId") String eventSelect,
+            @DefaultValue("jobResultTable:sendEventButton") String eventButton,
+            @DefaultValue("autosub") String eventEvent,
+            /*
+             * Dropdown value of each action (FORCE_STARTJOB: "1"), used when the response does not list the
+             * dropdown's options; when it does, the option is found by its label.
+             */
+            @Nullable Map<String, String> eventIds,
+            /* The dialog that Go opens, its form and its Yes button. */
+            @DefaultValue("/wcc/quickview/pages/dialog/confirmationDialog.jsf") String confirmationPath,
+            @DefaultValue("confirmationDialog") String confirmationForm,
+            @DefaultValue("sendEvtYes") String confirmButton,
+            /* Page parameters a dialog URL needs; taken from the Quick View page URL when the dialog's lacks them. */
+            @DefaultValue({"AntiXSRFToken", "OWASP-CSRFTOKEN", "conversationContext"}) List<String> dialogParams,
+            /* id of the element with the page's (error) messages. */
+            @DefaultValue("pageMessages") String messagesId) {
 
         public Quickview {
             loginPage = blankToNull(loginPage);
+            eventIds = eventIds == null ? Map.of() : Map.copyOf(eventIds);
         }
     }
 

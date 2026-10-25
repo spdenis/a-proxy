@@ -111,7 +111,7 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/se
 
 A missing, wrong, expired or revoked token gives `401` with `application/problem+json` (`/problems/token-invalid`).
 
-### Job API (read-only)
+### Job API
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/jobs/MY_JOB                # everything below
@@ -177,6 +177,56 @@ request). When the answer is not a partial-page response (session expired, redir
 
 Set `logging.level.com.testing.aproxy.webui=DEBUG` to see each request the proxy makes to AutoSys (paths only).
 
+### Job actions: force start
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+     -H "Idempotency-Key: $(uuidgen)" -d '{"action":"FORCE_STARTJOB","comment":"rerun after fix"}' \
+     http://localhost:8080/api/v1/jobs/MY_JOB/actions
+```
+
+```json
+{"job":"MY_JOB", "action":"FORCE_STARTJOB", "outcome":"ACCEPTED", "event":"Force Start Job",
+ "autosysMessage":null, "confirmation":"Are you sure ...? Yes No", "statusAfter":"STARTING",
+ "requestId":"...", "at":"2026-10-25T12:00:00Z"}
+```
+
+The proxy does what you do in Quick View, with the same session as the read API:
+
+1. It searches for the job. It goes on only if the results show exactly that job.
+2. It chooses the event in the results' dropdown (`jobResultTable:eventId`, a partial-page event). The option is
+   found by its label ("Force Start" / "Force Start Job"); when the response does not list the options, it uses
+   `autosys.webui.quickview.event-ids` (`FORCE_STARTJOB: "1"`).
+3. It presses **Go** (`jobResultTable:sendEventButton`).
+4. It opens the confirmation dialog that Go asks for (`confirmationDialog.jsf`, with the page's `AntiXSRFToken`,
+   `OWASP-CSRFTOKEN` and `conversationContext`).
+5. It answers **Yes** (`sendEvtYes`).
+6. It searches for the job again, to report `statusAfter`.
+
+`outcome`:
+
+| Outcome | Status | Meaning |
+|---|---|---|
+| `ACCEPTED` | 200 | The dialog closed normally after Yes. |
+| `REJECTED` | 409 `autosys-action-rejected` | AutoSys answered Go with a message and no dialog (e.g. no permission), or the dropdown does not offer the action. Nothing happened. |
+| `UNKNOWN` | 502 `autosys-action-unknown` | Yes was sent but the answer was unclear (error page, no answer). The event may have run. |
+
+Any other error before Yes (`autosys-session`, `autosys-unexpected-response`, ...) says "the event was not sent".
+
+- **Never retried after Yes.** Only the job search before it is retried when the AutoSys session has expired.
+- Every action writes one `JOB_ACTION` line to the AUDIT log: user, client IP, job, action, outcome
+  (`NOT_SENT` when it failed before Yes), requestId, AutoSys message and your `comment`. Nothing else is done with
+  the comment.
+- **`Idempotency-Key`:** a request with the same key within 10 minutes (`autosys.actions.idempotency-ttl`) gets the first
+  answer back, and the event is not sent again. The same key for another job or action is answered with 422.
+- **Limits:** at most 30 actions per minute and session (`autosys.actions.rate-limit-per-minute`), otherwise 429
+  `rate-limited`.
+- **Turning it off:** `autosys.actions.enabled=false` answers 403 `actions-disabled`.
+- **Environments:** the proxy only starts for `allowed-environments`, so actions are available in those only.
+- **Other actions:** `STARTJOB` and `KILLJOB` go through the same steps but have not been tried against AutoSys yet. They
+  need a dropdown option labelled "Start" / "Kill" (with or without "Job"), or an `event-ids` entry.
+- **Logs:** the proxy logs AutoSys's answer to Yes, with secrets masked, as `[backend] 'user' confirmed ...`.
+
 ## Copilot skill
 
 `.github/skills/autosys-jobs/` is an agent skill for GitHub Copilot: ask Copilot things like "give me the
@@ -190,7 +240,8 @@ calls the job API through `autosys.ps1` (PowerShell) and answers from the result
   including Copilot's own terminals. (`AUTOSYS_PROXY_TOKEN`, if set, takes precedence; `AUTOSYS_PROXY_URL` if the
   proxy is not on `http://localhost:8080`.)
 - The script works on its own too: `powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 downstream MY_JOB -Depth 3`.
-  Commands: `job`, `status`, `deps`, `runs`, `jobs`, `search`, `downstream`, `upstream`, `tree`, `session`.
+  Commands: `job`, `status`, `deps`, `runs`, `jobs`, `search`, `downstream`, `upstream`, `tree`, `session`,
+  `force-start` (Copilot runs it only when you ask to force start a job, after you confirm the job name).
 
 ## Capture mode: record the AutoSys UI's internal requests
 
@@ -307,7 +358,7 @@ and `--responses` searches only response headers and bodies (where a token is is
 - WebSockets are not proxied (Spring Cloud Gateway MVC does not support them).
 - SSO logins (SAML/OIDC/Kerberos) are out of scope.
 - Multipart logins are not captured.
-- The job API is read-only; start/force start/kill come next.
+- Actions: only force start has been checked against Quick View captures; for boxes it is untried.
 - The proxy's own AutoSys session is not logged out when the proxy session ends; it times out on the AutoSys side.
 - Only the first page of search results is returned.
 

@@ -65,4 +65,24 @@ class WebUiPartsTest {
                 Map.entry("s", "1"), Map.entry("t", "x & y"));
         assertThat(QuickViewClient.queryParams(form.action())).containsEntry("T", "1").containsEntry("c", "2");
     }
+
+    @Test
+    void actionsMatchTheirDropdownLabels() {
+        assertThat(JobAction.FORCE_STARTJOB.matches("Force Start Job")).isTrue();
+        assertThat(JobAction.FORCE_STARTJOB.matches(" force-start ")).isTrue();
+        assertThat(JobAction.STARTJOB.matches("Start Job")).isTrue();
+        assertThat(JobAction.STARTJOB.matches("Force Start Job")).isFalse();
+        assertThat(JobAction.KILLJOB.matches("Kill Job")).isTrue();
+        assertThat(JobAction.KILLJOB.matches("Kill Job Now")).isFalse();
+    }
+
+    @Test
+    void selectsAndText() {
+        String markup = "<![CDATA[<select name=\"t:eventId\"><option value=\"0\" selected>Send Event</option>"
+                + "<option value=\"1\">Force Start &amp; Go</option><option>Plain</option></select>]]>";
+        assertThat(HtmlForms.selects(markup)).isEqualTo(Map.of("t:eventId",
+                Map.of("0", "Send Event", "1", "Force Start & Go", "Plain", "Plain")));
+        assertThat(HtmlForms.text("<html><head><title>T</title><script>var a='<b>';</script></head><body>"
+                + "<p>Are you&nbsp;sure?</p>\n<button>Yes</button></body></html>")).isEqualTo("Are you sure? Yes");
+    }
 }

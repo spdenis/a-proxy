@@ -391,6 +391,139 @@ class QuickViewApiTest {
                 .contains("not a box job").contains("CMD");
     }
 
+    static final String DIALOG = "/wcc/quickview/pages/dialog/confirmationDialog.jsf";
+
+    /** Quick View's force start: choosing the event, Go (opens the dialog), the dialog, its Yes. */
+    static void stubEvents(String goResponse, int answerStatus) throws IOException {
+        autosys.stubFor(post(urlEqualTo(SEARCH)).atPriority(1)
+                .withRequestBody(containing("source=jobResultTable%3AeventId&"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/xml;charset=utf-8")
+                        .withBody(resource("event-chosen.xml"))));
+        autosys.stubFor(post(urlEqualTo(SEARCH)).atPriority(1)
+                .withRequestBody(containing("source=jobResultTable%3AsendEventButton&"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/xml;charset=utf-8")
+                        .withBody(resource(goResponse))));
+        autosys.stubFor(get(urlPathEqualTo(DIALOG))
+                .withQueryParam("OWASP-CSRFTOKEN", equalTo("C-1"))
+                .withHeader("Cookie", containing("JSESSIONID=js-1"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/html;charset=UTF-8")
+                        .withBody(resource("dialog.html"))));
+        autosys.stubFor(post(urlPathEqualTo(DIALOG))
+                .willReturn(aResponse().withStatus(answerStatus).withHeader("Content-Type", "text/html;charset=UTF-8")
+                        .withBody(answerStatus == 200 ? resource("dialog-closed.html") : "<html>Error</html>")));
+    }
+
+    @Test
+    void forceStartChoosesTheEventPressesGoAndConfirms(CapturedOutput output) throws Exception {
+        stubEvents("event-go.xml", 200);
+        String token = login();
+
+        HttpResponse<String> response = action("TEST_FX_LOADER", token,
+                "{\"action\":\"FORCE_STARTJOB\",\"comment\":\"rerun after fix\"}", "key-1");
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+        JsonNode result = JsonMapper.shared().readTree(response.body());
+        assertThat(result.at("/job").asString()).isEqualTo("TEST_FX_LOADER");
+        assertThat(result.at("/action").asString()).isEqualTo("FORCE_STARTJOB");
+        assertThat(result.at("/outcome").asString()).isEqualTo("ACCEPTED");
+        assertThat(result.at("/event").asString()).isEqualTo("Force Start Job");
+        assertThat(result.at("/confirmation").asString())
+                .isEqualTo("Are you sure you want to send the event FORCE_STARTJOB for the job TEST_FX_LOADER? Yes No");
+        assertThat(result.at("/statusAfter").asString()).isEqualTo("SUCCESS");
+        assertThat(result.at("/requestId").asString()).isNotBlank();
+
+        // the dropdown value of the option labelled "Force Start Job", then Go with it, on the latest ViewState
+        autosys.verify(1, postRequestedFor(urlEqualTo(SEARCH))
+                .withRequestBody(containing("jobNameInput=TEST_FX_LOADER&"))
+                .withRequestBody(containing("jobResultTable%3AeventId=1&"))
+                .withRequestBody(containing("javax.faces.ViewState=%21VS-2"))
+                .withRequestBody(containing("source=jobResultTable%3AeventId&partialTargets=&partial=true&state=&value="
+                        + "&event=autosub")));
+        autosys.verify(1, postRequestedFor(urlEqualTo(SEARCH))
+                .withRequestBody(containing("jobResultTable%3AeventId=1&"))
+                .withRequestBody(containing("javax.faces.ViewState=%21VS-3"))
+                .withRequestBody(containing("source=jobResultTable%3AsendEventButton&partialTargets=&partial=true"
+                        + "&event=autosub"))
+                .withRequestBody(com.github.tomakehurst.wiremock.client.WireMock.notContaining("state=")));
+        // the dialog with the page's tokens, then its Yes
+        autosys.verify(1, com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor(urlEqualTo(DIALOG
+                + "?_afPfm=pf-1&AntiXSRFToken=XSRF-1&OWASP-CSRFTOKEN=C-1&conversationContext=1")));
+        autosys.verify(1, postRequestedFor(urlEqualTo(DIALOG
+                + "?_afPfm=pf-1&AntiXSRFToken=XSRF-1&OWASP-CSRFTOKEN=C-1&conversationContext=1"))
+                .withHeader("Referer", containing(DIALOG + "?_afPfm=pf-1"))
+                .withRequestBody(equalTo("org.apache.myfaces.trinidad.faces.FORM=confirmationDialog"
+                        + "&_noJavaScript=false&javax.faces.ViewState=%21DVS-1&source=sendEvtYes")));
+
+        // the same Idempotency-Key gets the same answer without sending the event again
+        HttpResponse<String> again = action("TEST_FX_LOADER", token, "{\"action\":\"FORCE_STARTJOB\"}", "key-1");
+        assertThat(again.body()).isEqualTo(response.body());
+        autosys.verify(1, postRequestedFor(urlPathEqualTo(DIALOG)));
+        assertThat(action("TEST_FX_LOADER", token, "{\"action\":\"STARTJOB\"}", "key-1").statusCode())
+                .isEqualTo(422);
+
+        assertThat(output.getAll())
+                .containsPattern("\"event\":\"JOB_ACTION\",\"user\":\"carol\",.*\"job\":\"TEST_FX_LOADER\","
+                        + "\"action\":\"FORCE_STARTJOB\",\"outcome\":\"ACCEPTED\",.*\"comment\":\"rerun after fix\"")
+                .contains("replayed for its Idempotency-Key")
+                .doesNotContain("XSRF-1").doesNotContain("C-1").doesNotContain("DVS-1").doesNotContain(token);
+    }
+
+    @Test
+    void unclearAnswerIsUnknownAndNotRetried() throws Exception {
+        stubEvents("event-go.xml", 500);
+        String token = login();
+
+        HttpResponse<String> response = action("TEST_FX_LOADER", token, "{\"action\":\"force_startjob\"}", null);
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(502);
+        JsonNode problem = JsonMapper.shared().readTree(response.body());
+        assertThat(problem.at("/type").asString()).isEqualTo("/problems/autosys-action-unknown");
+        assertThat(problem.at("/outcome").asString()).isEqualTo("UNKNOWN");
+        assertThat(problem.at("/detail").asString()).contains("check the job's status before trying again");
+        autosys.verify(1, postRequestedFor(urlPathEqualTo(DIALOG)));
+    }
+
+    @Test
+    void refusedOrNotOfferedEventsAreRejectedAndNothingIsConfirmed() throws Exception {
+        stubEvents("event-refused.xml", 200);
+        String token = login();
+
+        // the dropdown has no Kill: nothing is sent
+        HttpResponse<String> kill = action("TEST_FX_LOADER", token, "{\"action\":\"KILLJOB\"}", null);
+        assertThat(kill.statusCode()).as(kill.body()).isEqualTo(409);
+        JsonNode problem = JsonMapper.shared().readTree(kill.body());
+        assertThat(problem.at("/type").asString()).isEqualTo("/problems/autosys-action-rejected");
+        assertThat(problem.at("/outcome").asString()).isEqualTo("REJECTED");
+        assertThat(problem.at("/autosysMessage").asString())
+                .isEqualTo("Quick View offers no Kill for job TEST_FX_LOADER (it offers Send Event, Force Start Job, "
+                        + "On Hold, Off Hold)");
+        autosys.verify(0, postRequestedFor(urlEqualTo(SEARCH)).withRequestBody(containing("eventId")));
+
+        // without the dropdown's options the configured value is sent; AutoSys answers Go with an error
+        autosys.stubFor(post(urlEqualTo(SEARCH)).atPriority(2).withRequestBody(containing("source=goButtonID&"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/xml;charset=utf-8")
+                        .withBody(resource("job.xml").replaceAll("<select id=\"jobResultTable:eventId\".*?</select>", ""))));
+        HttpResponse<String> force = action("TEST_FX_LOADER", token, "{\"action\":\"FORCE_STARTJOB\"}", null);
+        assertThat(force.statusCode()).as(force.body()).isEqualTo(409);
+        assertThat(JsonMapper.shared().readTree(force.body()).at("/autosysMessage").asString())
+                .isEqualTo("You are not authorized to send this event.");
+        autosys.verify(1, postRequestedFor(urlEqualTo(SEARCH))
+                .withRequestBody(containing("jobResultTable%3AeventId=1&"))
+                .withRequestBody(containing("source=jobResultTable%3AsendEventButton&")));
+        autosys.verify(0, com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor(urlPathEqualTo(DIALOG)));
+        autosys.verify(0, postRequestedFor(urlPathEqualTo(DIALOG)));
+
+        assertThat(action("TEST_FX_LOADER", token, "{\"action\":\"DELETE_JOB\"}", null).statusCode()).isEqualTo(400);
+        assertThat(action("NOPE", token, "{\"action\":\"FORCE_STARTJOB\"}", null).statusCode()).isEqualTo(404);
+    }
+
+    private HttpResponse<String> action(String job, String token, String body, @org.jspecify.annotations.Nullable String key)
+            throws Exception {
+        return key == null
+                ? browser.post("/api/v1/jobs/" + job + "/actions", "application/json", body,
+                        "Authorization", "Bearer " + token)
+                : browser.post("/api/v1/jobs/" + job + "/actions", "application/json", body,
+                        "Authorization", "Bearer " + token, "Idempotency-Key", key);
+    }
+
     @Test
     void apiNeedsToken() throws Exception {
         assertThat(browser.get("/api/v1/jobs/TEST_FX_LOADER").statusCode()).isEqualTo(401);

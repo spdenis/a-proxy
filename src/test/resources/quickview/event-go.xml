@@ -1,0 +1,6 @@
+<?xml version="1.0" ?>
+<content action="/wcc/quickview/pages/main.jsf?AntiXSRFToken=XSRF-1&amp;conversationContext=1">
+<fragment><![CDATA[<span id="tr_headerForm_Postscript"><input type="hidden" name="javax.faces.ViewState" value="!VS-4"></span>]]></fragment>
+<fragment><![CDATA[<div id="pageMessages"></div>]]></fragment>
+<fragment><![CDATA[<span id="tr_jobDetailsForm_Postscript"><input type="hidden" name="javax.faces.ViewState" value="!VS-4"><script type="text/javascript">_launchDialog('\/wcc\/quickview\/pages\/dialog\/confirmationDialog.jsf?_afPfm=pf-1', 'confirmationDialog', {width:400,height:150});</script></span>]]></fragment>
+</content>

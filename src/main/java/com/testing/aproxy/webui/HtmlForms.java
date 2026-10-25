@@ -42,6 +42,37 @@ public final class HtmlForms {
         return fields(markup.replace("<![CDATA[", "").replace("]]>", ""));
     }
 
+    /**
+     * Options of every select in some markup, by select name: option value (its label when it has no value
+     * attribute) to label.
+     */
+    public static Map<String, Map<String, String>> selects(String markup) {
+        Map<String, Map<String, String>> selects = new LinkedHashMap<>();
+        Matcher m = FIELD.matcher(markup.replace("<![CDATA[", "").replace("]]>", ""));
+        while (m.find()) {
+            String name = m.group(2) == null ? null : attr(m.group(2), "name");
+            if (name != null) {
+                Map<String, String> options = new LinkedHashMap<>();
+                Matcher o = OPTION.matcher(m.group(3));
+                while (o.find()) {
+                    String label = unescape(o.group(2).strip());
+                    String value = attr(o.group(1), "value");
+                    options.putIfAbsent(value == null ? label : value, label);
+                }
+                selects.putIfAbsent(name, options);
+            }
+        }
+        return selects;
+    }
+
+    /** The text a user reads in some markup: head, scripts, styles and tags removed, whitespace collapsed. */
+    public static String text(String markup) {
+        String s = markup.replace("<![CDATA[", "").replace("]]>", "")
+                .replaceAll("(?is)<(head|script|style)\\b.*?</\\1\\s*>", " ")
+                .replaceAll("(?s)<[^>]*>", " ");
+        return unescape(s).replace("&nbsp;", " ").replace("&#160;", " ").replaceAll("\\s+", " ").strip();
+    }
+
     private static Map<String, String> fields(String formBody) {
         Map<String, String> fields = new LinkedHashMap<>();
         Matcher m = FIELD.matcher(formBody);

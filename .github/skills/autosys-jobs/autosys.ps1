@@ -5,6 +5,7 @@
 .DESCRIPTION
     Single calls (job, status, deps, runs, jobs, search, session) print the API response.
     Traversals (downstream, upstream, tree) make one call per job and print the collected graph.
+    force-start sends FORCE_STARTJOB for one job (only after the user has confirmed it) and prints the outcome.
 
     The API token (asp_..., from http://localhost:8080/proxy/token) is read from
       AUTOSYS_PROXY_TOKEN       environment variable, if set, else
@@ -16,10 +17,12 @@
     powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 deps MY_JOB
     powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 downstream MY_JOB -Depth 3
     powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 tree MY_BOX
+    powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 force-start MY_JOB -Comment "rerun after fix"
 #>
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('set-token', 'session', 'job', 'status', 'deps', 'runs', 'jobs', 'search', 'downstream', 'upstream', 'tree')]
+    [ValidateSet('set-token', 'session', 'job', 'status', 'deps', 'runs', 'jobs', 'search', 'downstream', 'upstream', 'tree',
+        'force-start')]
     [string]$Command,
 
     [Parameter(Position = 1)]
@@ -29,7 +32,10 @@ param(
     [int]$Depth = 5,
 
     # traversals: stop after this many jobs (one API call each)
-    [int]$MaxJobs = 100
+    [int]$MaxJobs = 100,
+
+    # force-start: why, written to the proxy's audit log
+    [string]$Comment
 )
 
 $ErrorActionPreference = 'Stop'
@@ -61,11 +67,18 @@ if ($Command -ne 'session' -and $Command -ne 'set-token' -and -not $Name) {
     Fail "A job name is required: autosys.ps1 $Command <JOB_NAME>"
 }
 
-# GET an API path; returns @{ ok; status; body } instead of throwing, so traversals can go on
-function Get-Api([string]$path) {
+# calls an API path; returns @{ ok; status; body } instead of throwing, so traversals can go on
+function Get-Api([string]$path, [string]$method = 'Get', $payload = $null) {
     try {
-        $body = Invoke-RestMethod -Method Get -Uri ($base + $path) -TimeoutSec 120 `
-            -Headers @{ Authorization = "Bearer $token"; Accept = 'application/json' }
+        $headers = @{ Authorization = "Bearer $token"; Accept = 'application/json' }
+        if ($payload) {
+            # lets the proxy answer a duplicate of this request from the first one instead of acting twice
+            $headers['Idempotency-Key'] = [guid]::NewGuid().ToString()
+            $body = Invoke-RestMethod -Method $method -Uri ($base + $path) -TimeoutSec 180 -Headers $headers `
+                -ContentType 'application/json' -Body ($payload | ConvertTo-Json -Compress)
+        } else {
+            $body = Invoke-RestMethod -Method $method -Uri ($base + $path) -TimeoutSec 120 -Headers $headers
+        }
         return @{ ok = $true; status = 200; body = $body }
     } catch {
         $status = 0
@@ -162,6 +175,15 @@ switch ($Command) {
     'runs'    { Print-Single (Job-Path $Name '/runs') }
     'jobs'    { Print-Single (Job-Path $Name '/jobs') }
     'search'  { Print-Single ('/api/v1/jobs?name=' + [uri]::EscapeDataString($Name)) }
+
+    # changes AutoSys: run only when the user has asked for it and confirmed the job name
+    'force-start' {
+        $payload = [ordered]@{ action = 'FORCE_STARTJOB' }
+        if ($Comment) { $payload['comment'] = $Comment }
+        $r = Get-Api (Job-Path $Name '/actions') 'Post' $payload
+        Print $r.body
+        if (-not $r.ok) { exit 1 }
+    }
 
     # jobs whose conditions refer to this job, and the jobs depending on those, ...
     'downstream' {

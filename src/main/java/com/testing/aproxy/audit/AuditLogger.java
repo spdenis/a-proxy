@@ -34,6 +34,23 @@ public class AuditLogger {
                 Map.of("sessionId", sessionId, "reason", reason));
     }
 
+    /**
+     * A job action: {@code outcome} is ACCEPTED, REJECTED or UNKNOWN once the event was confirmed in
+     * AutoSys, NOT_SENT when it failed before that (with the reason as {@code message}).
+     */
+    public void jobAction(String username, String sessionId, @Nullable String clientIp, String job, String action,
+            String outcome, String requestId, @Nullable String message, @Nullable String comment) {
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("sessionId", sessionId);
+        extra.put("job", job);
+        extra.put("action", action);
+        extra.put("outcome", outcome);
+        extra.put("requestId", requestId);
+        extra.put("autosysMessage", message);
+        extra.put("comment", comment);
+        write("JOB_ACTION", username, clientIp, extra);
+    }
+
     public void sessionClosed(String username, String sessionId, String reason) {
         write("SESSION_CLOSED", username, null, Map.of("sessionId", sessionId, "reason", reason));
     }
