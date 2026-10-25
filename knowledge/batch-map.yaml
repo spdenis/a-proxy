@@ -1,0 +1,40 @@
+# Business batch name → Autosys jobs.  REPLACE THE EXAMPLES WITH YOUR REAL JOBS.
+#
+# Structure:
+#   <REGION>:
+#     <BATCH>:
+#       aliases:        other names people use ("eqpb", "equity positions batch")
+#       box:            top-level Autosys box for the batch
+#       critical_jobs:  jobs whose failure blocks the batch (check these first)
+#       expected_end:   normal completion time, UTC
+#       owner:          team / person to escalate to
+#       notes:          anything the agent should know
+#
+# region.sh reads the 'box:' lines; keep 'box:' indented under its region.
+
+TOKYO:
+  EQPB:
+    aliases: [tokyo eqpb, tky eqpb]
+    box: TKY_EQPB_MAIN_BOX
+    critical_jobs: [TKY_EQPB_LOAD_POS, TKY_EQPB_CALC_MARGIN]
+    expected_end: "21:30 UTC"
+    owner: margin-risk-dev
+    notes: ""
+
+EMEA:
+  EQPB:
+    aliases: [emea eqpb, london eqpb]
+    box: EMEA_EQPB_MAIN_BOX
+    critical_jobs: [EMEA_EQPB_LOAD_POS, EMEA_EQPB_CALC_MARGIN]
+    expected_end: "05:30 UTC"
+    owner: margin-risk-dev
+    notes: ""
+
+NAM:
+  EQPB:
+    aliases: [nam eqpb, ny eqpb, us eqpb]
+    box: NAM_EQPB_MAIN_BOX
+    critical_jobs: [NAM_EQPB_LOAD_POS, NAM_EQPB_CALC_MARGIN]
+    expected_end: "02:30 UTC"
+    owner: margin-risk-dev
+    notes: ""
