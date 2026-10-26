@@ -91,7 +91,8 @@ function Get-Api([string]$path, [string]$method = 'Get', $payload = $null) {
             Fail "The proxy at $base is not reachable: $($_.Exception.Message)"
         }
         if ($status -eq 401) {
-            Fail "401: the token is expired or was replaced by a newer login. $howToSetToken"
+            $why = if ($problem -and $problem.detail) { $problem.detail } else { 'the token is expired or was replaced by a newer login' }
+            Fail "401: $why. $howToSetToken"
         }
         return @{ ok = $false; status = $status; body = $problem }
     }

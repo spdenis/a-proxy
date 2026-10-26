@@ -33,6 +33,7 @@ autosys:
     idle-ttl: 8h
     absolute-ttl: 24h
     token-page-ttl: 5m
+    browser-use-counts: true      # the browser using AutoSys through the proxy keeps the token from going idle
   http:
     connect-timeout: 5s
     read-timeout: 30s

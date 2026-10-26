@@ -91,7 +91,14 @@ Until success rules are configured, logins pass through normally but no token is
    browser that logged in. To get a new token, log in again. That replaces the previous token.
 
 The token stays valid for 8 hours without use (`autosys.session.idle-ttl`) and 24 hours at most
-(`autosys.session.absolute-ttl`), or until it is revoked or the proxy restarts.
+(`autosys.session.absolute-ttl`), or until it is revoked, a newer login of the same user replaces it, or the
+proxy restarts (tokens are kept in memory only). API calls count as use, and so does the browser using AutoSys
+through the proxy (`autosys.session.browser-use-counts`, on by default).
+
+A rejected token gets a 401 whose `detail` says why: expired (idle or at most 24h, with the time), replaced by a
+newer login, revoked, or unknown to the proxy (it was restarted). The same reason is logged at INFO (`[api] 401`).
+The AutoSys session in the browser can outlive the token: after a proxy restart or the 24h limit, log out of
+AutoSys and log in again through the proxy to get a new token.
 
 ### Use the token
 
@@ -196,7 +203,8 @@ Sessions are also skipped when:
 - they are busy with another call;
 - they talked to AutoSys within the interval.
 
-The keep-alive does not count as using the proxy session: tokens still expire after `autosys.session.idle-ttl`.
+The keep-alive does not count as using the proxy session: without API calls or browser use, tokens still
+expire after `autosys.session.idle-ttl`.
 
 A failure is logged at INFO once per session, until it works again. Each request is logged at DEBUG
 (`com.testing.aproxy.webui`).

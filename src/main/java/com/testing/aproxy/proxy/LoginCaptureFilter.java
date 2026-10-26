@@ -249,6 +249,7 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
             }
             return null;
         }
+        sessions.browserUsed(session);
         session.rememberBrowserUserAgent(request.getHeader(HttpHeaders.USER_AGENT));
         rememberXsrfToken(request, session);
         rememberQuickViewPage(request, session, header);

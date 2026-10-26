@@ -4,6 +4,8 @@ import com.testing.aproxy.api.BearerTokenFilter;
 import com.testing.aproxy.api.Problems;
 import com.testing.aproxy.session.SessionRegistry;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -30,6 +32,8 @@ import org.springframework.security.web.firewall.StrictHttpFirewall;
 @Configuration(proxyBeanMethods = false)
 public class SecurityConfig {
 
+    private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
+
     @Bean
     @Order(1)
     SecurityFilterChain apiChain(HttpSecurity http, SessionRegistry sessions) throws Exception {
@@ -38,8 +42,14 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
                 .addFilterBefore(new BearerTokenFilter(sessions), AnonymousAuthenticationFilter.class)
                 .exceptionHandling(e -> e
-                        .authenticationEntryPoint((req, res, ex) -> Problems.write(res, HttpStatus.UNAUTHORIZED,
-                                Problems.TOKEN_INVALID, "Missing, invalid or expired API token"))
+                        .authenticationEntryPoint((req, res, ex) -> {
+                            Object why = req.getAttribute(BearerTokenFilter.REJECTED);
+                            if (why != null) {
+                                log.info("[api] 401 on {}: {}", req.getRequestURI(), why);
+                            }
+                            Problems.write(res, HttpStatus.UNAUTHORIZED, Problems.TOKEN_INVALID,
+                                    why != null ? why.toString() : "Missing API token (Authorization: Bearer asp_...)");
+                        })
                         .accessDeniedHandler((req, res, ex) -> Problems.write(res, HttpStatus.FORBIDDEN,
                                 "forbidden", "Access denied")))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

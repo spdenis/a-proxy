@@ -112,7 +112,9 @@ public record AutosysProperties(
             @DefaultValue("8h") Duration idleTtl,
             @DefaultValue("24h") Duration absoluteTtl,
             /* How long the freshly issued token can be viewed on /proxy/token. */
-            @DefaultValue("5m") Duration tokenPageTtl) {
+            @DefaultValue("5m") Duration tokenPageTtl,
+            /* Whether the linked browser's AutoSys pages count as use of the session (refresh its idle time). */
+            @DefaultValue("true") boolean browserUseCounts) {
     }
 
     public record Http(

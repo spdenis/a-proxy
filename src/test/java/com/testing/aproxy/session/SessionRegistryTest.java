@@ -57,6 +57,33 @@ class SessionRegistryTest {
     }
 
     @Test
+    void browserUseRefreshesTheIdleTimer() {
+        var issued = registry.create("alice", "pw".toCharArray(), null);
+
+        clock.advance(Duration.ofHours(7));
+        registry.browserUsed(issued.session());
+        clock.advance(Duration.ofHours(7));
+        assertThat(registry.authenticate(issued.token(), null)).isPresent();
+    }
+
+    @Test
+    void rejectedTokensSayWhy() {
+        var idle = registry.create("alice", "pw".toCharArray(), null);
+        var replaced = registry.create("bob", "pw".toCharArray(), null);
+        registry.create("bob", "pw2".toCharArray(), null);
+        var revoked = registry.create("carol", "pw".toCharArray(), null);
+        registry.revoke(revoked.session());
+
+        assertThat(registry.whyRejected(replaced.token())).contains("replaced at 2026-10-23", "'bob'");
+        assertThat(registry.whyRejected(revoked.token())).contains("revoked");
+        assertThat(registry.whyRejected("asp_unknownunknownunknownunknown")).contains("restarted");
+        assertThat(registry.whyRejected("nope")).contains("not an API token");
+        clock.advance(Duration.ofHours(9));
+        assertThat(registry.authenticate(idle.token(), null)).isEmpty();
+        assertThat(registry.whyRejected(idle.token())).contains("expired at 2026-10-23 18:00:00", "PT8H without use");
+    }
+
+    @Test
     void absoluteTimeoutWinsOverActivity() {
         var issued = registry.create("alice", "pw".toCharArray(), null);
         for (int i = 0; i < 4; i++) {
@@ -106,14 +133,14 @@ class SessionRegistryTest {
     static AutosysProperties properties(Duration idle, Duration absolute) {
         return new AutosysProperties(URI.create("https://autosys.example.internal"), Set.of("DEV"), "DEV",
                 new AutosysProperties.Proxy("", false, true, true, null),
-                new AutosysProperties.Session(idle, absolute, Duration.ofMinutes(5)),
+                new AutosysProperties.Session(idle, absolute, Duration.ofMinutes(5), true),
                 null, new AutosysProperties.Token(false), null, null, null, null);
     }
 
     static AutosysProperties propertiesWithIpBinding() {
         return new AutosysProperties(URI.create("https://autosys.example.internal"), Set.of("DEV"), "DEV",
                 new AutosysProperties.Proxy("", false, true, true, null),
-                new AutosysProperties.Session(Duration.ofHours(8), Duration.ofHours(24), Duration.ofMinutes(5)),
+                new AutosysProperties.Session(Duration.ofHours(8), Duration.ofHours(24), Duration.ofMinutes(5), true),
                 null, new AutosysProperties.Token(true), null, null, null, null);
     }
 

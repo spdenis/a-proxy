@@ -3,6 +3,7 @@ package com.testing.aproxy.session;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -36,7 +37,10 @@ public class SessionRegistry {
     private final Duration idleTtl;
     private final Duration absoluteTtl;
     private final boolean bindClientIp;
+    private final boolean browserUseCounts;
     private final Cache<String, ProxySession> sessions;
+    /* token hash -> why its session ended, to answer a 401 with the reason; tokens themselves are not kept */
+    private final Cache<String, Closed> closed;
     private final ConcurrentMap<String, String> tokenHashByUser = new ConcurrentHashMap<>();
     /* hash of the ASP_SID browser cookie -> token hash */
     private final ConcurrentMap<String, String> tokenHashByBrowserKey = new ConcurrentHashMap<>();
@@ -51,6 +55,8 @@ public class SessionRegistry {
         this.idleTtl = properties.session().idleTtl();
         this.absoluteTtl = properties.session().absoluteTtl();
         this.bindClientIp = properties.token().bindClientIp();
+        this.browserUseCounts = properties.session().browserUseCounts();
+        this.closed = Caffeine.newBuilder().expireAfterWrite(absoluteTtl.multipliedBy(2)).maximumSize(10_000).build();
         this.sessions = Caffeine.newBuilder()
                 .ticker(() -> TimeUnit.MILLISECONDS.toNanos(clock.millis()))
                 .scheduler(Scheduler.systemScheduler())
@@ -82,6 +88,7 @@ public class SessionRegistry {
         String previous = tokenHashByUser.put(username, tokenHash);
         sessions.put(tokenHash, session);
         if (previous != null) {
+            closed.put(previous, new Closed(username, Reason.REPLACED, now));
             sessions.invalidate(previous);
         }
         return new IssuedSession(token, browserKey, session);
@@ -107,6 +114,48 @@ public class SessionRegistry {
     public Optional<ProxySession> byBrowserKey(String browserKey) {
         String tokenHash = tokenHashByBrowserKey.get(TokenService.hash(browserKey));
         return Optional.ofNullable(tokenHash == null ? null : sessions.policy().getIfPresentQuietly(tokenHash));
+    }
+
+    /**
+     * The browser linked to the session used AutoSys through the proxy: counts as use of the
+     * session (refreshes its idle timer) when {@code autosys.session.browser-use-counts} is on.
+     */
+    public void browserUsed(ProxySession session) {
+        if (browserUseCounts && session.state() != SessionState.CLOSED) {
+            session.touch(clock.instant());
+            sessions.getIfPresent(session.tokenHash()); // a read recomputes the expiry
+        }
+    }
+
+    /** Why a token that does not authenticate is not (or no longer) valid, for the 401 answer. */
+    public String whyRejected(String token) {
+        if (!TokenService.looksLikeToken(token)) {
+            return "This is not an API token of this proxy (they start with " + TokenService.PREFIX + ")";
+        }
+        String tokenHash = TokenService.hash(token);
+        sessions.cleanUp(); // records the reason of a session that has just expired
+        ProxySession open = sessions.policy().getIfPresentQuietly(tokenHash);
+        if (open != null && open.state() != SessionState.CLOSED) {
+            return "The API token is valid, but not from this client address (autosys.token.bind-client-ip)";
+        }
+        Closed why = closed.getIfPresent(tokenHash);
+        if (why == null) {
+            return "This proxy does not know the API token: it was restarted since the token was issued (tokens are "
+                    + "kept in memory only), or the token is wrong. Log in to AutoSys through the proxy again for "
+                    + "a new token";
+        }
+        String at = TIME.withZone(clock.getZone()).format(why.at());
+        return switch (why.reason()) {
+            case IDLE -> "The API token expired at " + at + " after " + idleTtl + " without use. Log in to AutoSys "
+                    + "through the proxy again for a new token";
+            case ABSOLUTE -> "The API token expired at " + at + ": tokens last at most " + absoluteTtl
+                    + " after the login. Log in to AutoSys through the proxy again for a new token";
+            case REPLACED -> "The API token was replaced at " + at + " by a newer login of '" + why.username()
+                    + "' through the proxy: copy the new token from " + "/proxy/token right after that login, or "
+                    + "log in again";
+            case REVOKED -> "The API token was revoked at " + at + ". Log in to AutoSys through the proxy again";
+            case SHUTDOWN -> "The proxy was shut down at " + at + ". Log in to AutoSys through the proxy again";
+        };
     }
 
     /** Looks up a session by token without refreshing it (e.g. for the token page). */
@@ -149,11 +198,28 @@ public class SessionRegistry {
             tokenHashByBrowserKey.remove(session.browserKeyHash());
         }
         session.close();
+        Reason reason = shuttingDown ? Reason.SHUTDOWN : switch (cause) {
+            case EXPIRED -> clock.instant().isBefore(session.absoluteExpiresAt()) ? Reason.IDLE : Reason.ABSOLUTE;
+            default -> Reason.REVOKED;
+        };
+        Instant at = switch (reason) {
+            case IDLE, ABSOLUTE -> idleExpiresAt(session);
+            default -> clock.instant();
+        };
+        // a replaced session has its reason already
+        closed.asMap().putIfAbsent(session.tokenHash(), new Closed(session.username(), reason, at));
         audit.sessionClosed(session.username(), session.sessionId(), shuttingDown ? "SHUTDOWN" : switch (cause) {
             case EXPIRED -> "EXPIRED";
             case EXPLICIT -> "REVOKED_OR_REPLACED";
             default -> cause.name();
         });
+    }
+
+    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    private enum Reason { IDLE, ABSOLUTE, REPLACED, REVOKED, SHUTDOWN }
+
+    private record Closed(String username, Reason reason, Instant at) {
     }
 
     /** Idle TTL, capped by the absolute TTL counted from creation. */

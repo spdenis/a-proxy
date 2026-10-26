@@ -22,6 +22,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 public class BearerTokenFilter extends OncePerRequestFilter {
 
     private static final String BEARER = "Bearer ";
+    /** Request attribute with the reason a presented token was rejected, for the 401 answer. */
+    public static final String REJECTED = BearerTokenFilter.class.getName() + ".rejected";
 
     private final SessionRegistry sessions;
 
@@ -35,12 +37,12 @@ public class BearerTokenFilter extends OncePerRequestFilter {
         String header = request.getHeader(HttpHeaders.AUTHORIZATION);
         if (header != null && header.regionMatches(true, 0, BEARER, 0, BEARER.length())) {
             String token = header.substring(BEARER.length()).strip();
-            sessions.authenticate(token, request.getRemoteAddr()).ifPresent(session -> {
+            sessions.authenticate(token, request.getRemoteAddr()).ifPresentOrElse(session -> {
                 var authentication = UsernamePasswordAuthenticationToken.authenticated(session, null, List.of());
                 var context = SecurityContextHolder.createEmptyContext();
                 context.setAuthentication(authentication);
                 SecurityContextHolder.setContext(context);
-            });
+            }, () -> request.setAttribute(REJECTED, sessions.whyRejected(token)));
         }
         chain.doFilter(request, response);
     }

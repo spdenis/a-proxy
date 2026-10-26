@@ -131,6 +131,7 @@ class ProxyLoginFlowTest {
                 .isEqualTo(204);
         HttpResponse<String> revoked = browser.get("/api/v1/session", "Authorization", "Bearer " + token);
         assertThat(revoked.statusCode()).isEqualTo(401);
+        assertThat(revoked.body()).contains("was revoked at");
         assertThat(browser.get("/proxy/token").body()).contains("No API token");
 
         assertThat(output.getAll()).doesNotContain(PASSWORD).doesNotContain(token).doesNotContain("abc123")
