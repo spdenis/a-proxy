@@ -28,7 +28,10 @@ the start of every round. Do not guess the time.
 Repeat these rounds:
 
 1. **Check the state.** Read the top-level box of every batch in scope (`tree BOX` or `status BOX`), with fresh
-   data every round. A batch is *done* when its top-level box is `SUCCESS`.
+   data every round. A batch is *done* when its top-level box is `SUCCESS` **for today's run**, or it is not
+   due today (not a run day, or its start time is still ahead). A `SUCCESS` from an earlier day on a run day
+   whose start time has passed is **not** done: it missed today's run and must catch up (see "judge today's run"
+   in your agent definition). Get the current time from the terminal every round.
 2. **Stop if** all batches are done, or the time limit is reached, or the user says stop. Go to
    [Final report](#final-report).
 3. **Find the root jobs.** For every batch that is not done, find the job that actually blocks it: the earliest
@@ -73,6 +76,9 @@ Starting this command is the user's approval, for this run only, of these action
 - **Force-start a sync job** from `knowledge/upstream-feeds.yaml` (in the environment in scope) when the feed's
   loader waits for it, as described in the agent definition.
 - **Force-start a job when `known-failures.md` says so** for the case you matched.
+- **Catch up a missed run:** force-start a box or job that was scheduled today, whose start time has passed and
+  which has not started, once its own and its boxes' conditions are satisfied (and it is not `ON_HOLD` /
+  `ON_ICE`). Only today's run, never runs of earlier days.
 - **Force-start a failed or terminated root job** once, when the evidence points to a one-off failure (it ran
   fine before with the same definition, its conditions are satisfied, and nothing suggests the same failure will
   happen again). Say why you think so.
@@ -92,7 +98,7 @@ Limits:
 When the loop stops, say why (all done / time limit / stopped by the user), then:
 
 ```
-ENV | REGION | BATCH | STATE | ROOT JOB | CAUSE | ACTIONS TAKEN | RESULT
+ENV | REGION | BATCH | SCHEDULED | LAST RUN (date, state) | ROOT JOB | CAUSE | ACTIONS TAKEN | RESULT
 ```
 
 followed by:
