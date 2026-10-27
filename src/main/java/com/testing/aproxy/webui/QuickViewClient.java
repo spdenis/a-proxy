@@ -222,9 +222,14 @@ public class QuickViewClient {
                             quickview.eventIds().get(action.name())))
                     : choose(found, action.label(), quickview.eventIds().get(action.name()));
             if (choice == null) {
-                Map<String, String> offered = HtmlForms.selects(found).getOrDefault(quickview.eventSelect(), Map.of());
+                String suffix = quickview.eventSelect().substring(quickview.eventSelect().lastIndexOf(':') + 1);
+                List<String> offered = HtmlForms.selects(found).entrySet().stream()
+                        .filter(e -> e.getKey().equals(quickview.eventSelect()) || e.getKey().endsWith(":" + suffix))
+                        .flatMap(e -> e.getValue().values().stream()).toList();
+                log.info("[backend] Quick View offers no {} for {} ('{}'): dropdown options {}", action.title(), job,
+                        session.username(), offered);
                 return new EventResult(job, Outcome.REJECTED, null, null, "Quick View offers no " + action.title()
-                        + " for job " + job + " (it offers " + String.join(", ", offered.values()) + ")", null);
+                        + " for job " + job + " (it offers " + String.join(", ", offered) + ")", null);
             }
             String what = choice.label() + " of job " + job;
 
