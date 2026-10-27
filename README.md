@@ -90,15 +90,19 @@ Until success rules are configured, logins pass through normally but no token is
 3. The page only shows the token for 5 minutes after login (`autosys.session.token-page-ttl`), and only in the
    browser that logged in. To get a new token, log in again. That replaces the previous token.
 
-The token stays valid for 8 hours without use (`autosys.session.idle-ttl`) and 24 hours at most
-(`autosys.session.absolute-ttl`), or until it is revoked, a newer login of the same user replaces it, or the
-proxy restarts (tokens are kept in memory only). API calls count as use, and so does the browser using AutoSys
-through the proxy (`autosys.session.browser-use-counts`, on by default).
+The token stays the same until you log in through the proxy again (the new login replaces it), it is revoked
+(`DELETE /api/v1/sessions/current`), or the proxy restarts (tokens are kept in memory only). When AutoSys drops its
+own session, the proxy logs in again by itself with the captured credentials (the password is kept encrypted in
+memory) and the token does not change.
 
-A rejected token gets a 401 whose `detail` says why: expired (idle or at most 24h, with the time), replaced by a
-newer login, revoked, or unknown to the proxy (it was restarted). The same reason is logged at INFO (`[api] 401`).
-The AutoSys session in the browser can outlive the token: after a proxy restart or the 24h limit, log out of
-AutoSys and log in again through the proxy to get a new token.
+Optional time limits: `autosys.session.idle-ttl` (time without use) and `autosys.session.absolute-ttl` (time since
+the login); `0`, the default, means none. API calls count as use, and so does the browser using AutoSys through the
+proxy (`autosys.session.browser-use-counts`, on by default).
+
+A rejected token gets a 401 whose `detail` says why: expired (with the time), replaced by a newer login, revoked, or
+unknown to the proxy (it was restarted). The same reason is logged at INFO (`[api] 401`). The AutoSys session in the
+browser can outlive the token: after a proxy restart, log out of AutoSys and log in again through the proxy to get a
+new token.
 
 ### Use the token
 
@@ -172,11 +176,29 @@ login is logged with the response status, body start and the headers sent. Then 
 request). When the answer is not a partial-page response (session expired, redirect to login), it opens Quick View again
 (falling back to its own login) and retries once. Calls of one session run one at a time. Times are as Quick View shows them (`Accept-Language: en-US`).
 
+After AutoSys rejects the proxy's own login, the session does not log in by itself again: a wrong or changed password
+tried over and over would lock the account. Log in through the proxy again (a new token).
+
+#### Several AutoSys URLs
+
+```properties
+autosys.backend-urls=https://autosys-webui-1.example.internal:8443,https://autosys-webui-2.example.internal:8443
+```
+
+The proxy's own logins use these URLs (default: `autosys.base-url` only). A session starts on the first one and stays
+there until AutoSys drops its session; it then logs in on the next one, and after the last one on the first again. A
+URL that does not answer (connection error or timeout) is skipped at login. Each move is logged at INFO
+(`logging in again on <url>`, `AutoSys at <url> unreachable`), and the AUDIT `BACKEND_LOGIN` line names the URL.
+
+The browser always goes to `autosys.base-url`: its AutoSys cookies and Quick View page are valid only there, so steps 1
+and 2 above are used only while a session is on that URL; on the others the proxy uses its own login (step 3).
+
 | Problem type | Status | Meaning |
 |---|---|---|
 | `/problems/job-not-found` | 404 | Quick View showed no job of that name |
 | `/problems/invalid-job-name` | 400 | name has characters other than letters, digits, `_ - . #` (search also `* %`) |
 | `/problems/autosys-login` | 502 | AutoSys rejected the proxy's own login (reason in `detail`; the AUDIT log has `BACKEND_LOGIN_FAILED`) |
+| `/problems/autosys-login-rejected` | 409 | AutoSys rejected the stored password earlier: the proxy does not try it again (so the account is not locked); log in through the proxy again |
 | `/problems/autosys-quickview` | 502 | Quick View did not open after login (check `entry-path`) |
 | `/problems/autosys-session` | 502 | Quick View kept refusing the search after logging in again |
 | `/problems/autosys-unreachable` | 502 | connection error or timeout |
@@ -203,8 +225,8 @@ Sessions are also skipped when:
 - they are busy with another call;
 - they talked to AutoSys within the interval.
 
-The keep-alive does not count as using the proxy session: without API calls or browser use, tokens still
-expire after `autosys.session.idle-ttl`.
+The keep-alive does not count as using the proxy session: when `autosys.session.idle-ttl` is set, tokens still
+expire after it without API calls or browser use.
 
 A failure is logged at INFO once per session, until it works again. Each request is logged at DEBUG
 (`com.testing.aproxy.webui`).

@@ -32,7 +32,7 @@ public final class ProxySession {
     /* "METHOD path" of the browser's latest page and XHR requests, for diagnostics */
     private final Deque<String> recentRequests = new ArrayDeque<>();
     private final Instant createdAt;
-    private final Instant absoluteExpiresAt;
+    private final @Nullable Instant absoluteExpiresAt;
     private final ReentrantLock lock = new ReentrantLock();
     private volatile @Nullable String browserKeyHash;
     private volatile @Nullable BrowserPage quickViewPage;
@@ -41,10 +41,12 @@ public final class ProxySession {
     private volatile Instant lastUsedAt;
     private volatile @Nullable String lastJob;
     private volatile SessionState state = SessionState.ACTIVE;
+    /* set when AutoSys rejected the stored password: no more own logins, so the account is not locked */
+    private volatile @Nullable String loginRejected;
 
     ProxySession(String username, String tokenHash, CredentialVault.SealedSecret credentials,
             @Nullable String clientIp, @Nullable LoginTemplate loginTemplate, List<String> autosysCookies, Instant now,
-            Instant absoluteExpiresAt) {
+            @Nullable Instant absoluteExpiresAt) {
         this.username = username;
         this.tokenHash = tokenHash;
         this.credentials = credentials;
@@ -190,7 +192,8 @@ public final class ProxySession {
         return lastUsedAt;
     }
 
-    public Instant absoluteExpiresAt() {
+    /** Null when tokens have no absolute expiry. */
+    public @Nullable Instant absoluteExpiresAt() {
         return absoluteExpiresAt;
     }
 
@@ -209,6 +212,15 @@ public final class ProxySession {
 
     void browserKeyHash(String hash) {
         this.browserKeyHash = hash;
+    }
+
+    /** Why AutoSys rejected the proxy's login with the stored password, or null. */
+    public @Nullable String loginRejected() {
+        return loginRejected;
+    }
+
+    public void loginRejected(String reason) {
+        this.loginRejected = reason;
     }
 
     void touch(Instant now) {

@@ -21,6 +21,9 @@ spring:
 
 autosys:
   base-url: https://autosys-webui.example.internal:8443   # origin only (no path)
+  # backend-urls:                 # the proxy's own logins: one URL per session, the next when AutoSys drops it
+  #   - https://autosys-webui-1.example.internal:8443
+  #   - https://autosys-webui-2.example.internal:8443
   environment: DEV
   allowed-environments: [DEV, UAT]
   proxy:
@@ -30,8 +33,8 @@ autosys:
     access-log: true          # one log line per request (ACCESS logger)
     start-page:               # e.g. /ui/Login.html: where http://proxy/ sends the browser; empty = forward "/"
   session:
-    idle-ttl: 8h
-    absolute-ttl: 24h
+    idle-ttl: 0                   # 0 = never; the token lasts until a new login through the proxy or a revoke
+    absolute-ttl: 0
     token-page-ttl: 5m
     browser-use-counts: true      # the browser using AutoSys through the proxy keeps the token from going idle
   http:

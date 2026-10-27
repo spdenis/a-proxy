@@ -15,6 +15,7 @@
 #   owner:        who to escalate to when the feed is missing in PROD too
 #   notes:        anything else the agent should know (optional)
 #
+# Use the UAT job names: the agent derives the QA names (CLOUD_NAM_X -> CLOUD_QA_NAM_X).
 # The entries below are examples: replace them with the real feeds.
 
 feeds:

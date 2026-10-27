@@ -76,6 +76,10 @@ class QuickViewApiTest {
 
     /** Fake AutoSys whose login sets WCC-ASID={@code loginAsid}; Quick View opens only with {@code validAsid}. */
     static void stubAutosys(String validAsid) throws IOException {
+        stubAutosys(autosys, validAsid);
+    }
+
+    static void stubAutosys(WireMockExtension autosys, String validAsid) throws IOException {
         autosys.resetAll();
         autosys.stubFor(post("/authentication/login")
                 .withHeader("X-Requested-With", equalTo("XMLHttpRequest"))
@@ -100,10 +104,10 @@ class QuickViewApiTest {
                 .withHeader("Cookie", containing("JSESSIONID=js-1"))
                 .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/html;charset=UTF-8")
                         .withBody(resource("main.html"))));
-        stubSearch("TEST_FX_LOADER", "job.xml");
-        stubSearch("NOPE", "not-found.xml");
-        stubSearch("TEST_FX*", "job.xml");
-        stubSearch("TEST_BOX", "box.xml");
+        stubSearch(autosys, "TEST_FX_LOADER", "job.xml");
+        stubSearch(autosys, "NOPE", "not-found.xml");
+        stubSearch(autosys, "TEST_FX*", "job.xml");
+        stubSearch(autosys, "TEST_BOX", "box.xml");
         // expanding the box: the fields the search response added, then the tree event on its first row
         autosys.stubFor(post(urlEqualTo(SEARCH)).atPriority(1)
                 .withHeader("Cookie", containing("JSESSIONID=js-1"))
@@ -123,6 +127,10 @@ class QuickViewApiTest {
     }
 
     static void stubSearch(String job, String file) throws IOException {
+        stubSearch(autosys, job, file);
+    }
+
+    static void stubSearch(WireMockExtension autosys, String job, String file) throws IOException {
         autosys.stubFor(post(urlEqualTo(SEARCH))
                 .withHeader("Cookie", containing("JSESSIONID=js-1"))
                 .withHeader("Tr-XHR-Message", equalTo("true"))
@@ -368,6 +376,11 @@ class QuickViewApiTest {
         assertThat(output.getAll()).contains("response 403 text/html", "body: <html>CSRF token missing</html>",
                 "sent headers [Accept, X-Requested-With, Origin, Referer")
                 .doesNotContain(PASSWORD);
+
+        // the stored password is not tried again, so the account cannot be locked
+        JsonNode again = api("/api/v1/jobs/TEST_FX_LOADER", token, 409);
+        assertThat(again.at("/type").asString()).isEqualTo("/problems/autosys-login-rejected");
+        autosys.verify(2, postRequestedFor(urlEqualTo("/authentication/login")));
     }
 
     @Test

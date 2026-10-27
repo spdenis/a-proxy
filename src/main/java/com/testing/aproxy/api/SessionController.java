@@ -41,7 +41,7 @@ public class SessionController {
     }
 
     public record SessionInfo(String sessionId, String username, SessionState state, Instant createdAt,
-            Instant lastUsedAt, Instant expiresAt, Instant absoluteExpiresAt,
+            Instant lastUsedAt, @Nullable Instant expiresAt, @Nullable Instant absoluteExpiresAt,
             /* names only: AutoSys cookies the browser of this session sent through the proxy */
             List<String> browserCookies,
             /* when the browser last searched in Quick View through the proxy; null = never */

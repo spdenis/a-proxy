@@ -126,6 +126,7 @@ The API returns `application/problem+json` with `type` and `detail`:
 | 409 `autosys-action-rejected`, 502 `autosys-action-unknown` | See [Force start](#force-start). |
 | 429 `rate-limited` | Too many actions in a minute: wait, do not loop. |
 | 403 `actions-disabled` | Actions are switched off on this proxy. |
+| 409 `autosys-login-rejected` | AutoSys rejected the stored password (e.g. it was changed): tell the user to log in to AutoSys through the proxy again and set the new token. Do not retry. |
 | 502 `autosys-quickview` | The proxy could not open Quick View: open Quick View in the browser through the proxy (`http://localhost:8080`), then retry. |
 | 502 `autosys-session`, `autosys-unreachable`, `autosys-login` | AutoSys did not answer as expected: retry once; if it fails again, show the `detail` to the user. |
 

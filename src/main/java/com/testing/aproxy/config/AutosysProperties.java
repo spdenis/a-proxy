@@ -25,6 +25,11 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties("autosys")
 public record AutosysProperties(
         @NotNull URI baseUrl,
+        /*
+         * AutoSys URLs (origins) for the proxy's own logins, in order: a session stays on one until AutoSys
+         * drops it, then logs in on the next one. Empty = base-url only. The browser always uses base-url.
+         */
+        @Nullable List<URI> backendUrls,
         @NotEmpty Set<String> allowedEnvironments,
         @NotBlank String environment,
         @Valid @DefaultValue Proxy proxy,
@@ -35,6 +40,10 @@ public record AutosysProperties(
         @Valid @DefaultValue Actions actions,
         @Valid @DefaultValue KeepAlive keepAlive,
         @Valid @DefaultValue Capture capture) {
+
+    public AutosysProperties {
+        backendUrls = backendUrls == null || backendUrls.isEmpty() ? List.of(baseUrl) : List.copyOf(backendUrls);
+    }
 
     /**
      * Background job status requests that keep each session's AutoSys (Quick View) session from timing
@@ -109,8 +118,9 @@ public record AutosysProperties(
     }
 
     public record Session(
-            @DefaultValue("8h") Duration idleTtl,
-            @DefaultValue("24h") Duration absoluteTtl,
+            /* 0 = never: the token stays valid until a new login through the proxy replaces it or it is revoked. */
+            @DefaultValue("0") Duration idleTtl,
+            @DefaultValue("0") Duration absoluteTtl,
             /* How long the freshly issued token can be viewed on /proxy/token. */
             @DefaultValue("5m") Duration tokenPageTtl,
             /* Whether the linked browser's AutoSys pages count as use of the session (refresh its idle time). */

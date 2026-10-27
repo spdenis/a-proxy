@@ -61,13 +61,16 @@ public class QuickViewClient {
     /* parameters of one Trinidad partial-page event, not kept from an earlier request */
     private static final List<String> EVENT_PARAMS = List.of("source", "event", "partial", "partialTargets", "state",
             "value", "path");
+    private static final String UNREACHABLE = "autosys-unreachable";
     private static final Redactor MASK = new Redactor(List.of());
 
     private final CloseableHttpClient http;
     private final CredentialVault vault;
     private final LoginClassifier classifier;
     private final AuditLogger audit;
-    private final URI base;
+    /* the browser's AutoSys (its cookies and pages are valid there), and the URLs for the proxy's own logins */
+    private final URI browserBase;
+    private final List<URI> bases;
     private final AutosysProperties.Login login;
     private final AutosysProperties.Quickview quickview;
     private final @Nullable String startPage;
@@ -79,13 +82,15 @@ public class QuickViewClient {
         this.vault = vault;
         this.classifier = classifier;
         this.audit = audit;
-        this.base = properties.baseUrl();
+        this.browserBase = properties.baseUrl();
+        this.bases = properties.backendUrls();
         this.login = properties.webui().login();
         this.quickview = properties.webui().quickview();
         this.startPage = properties.proxy().startPage();
         Duration idle = properties.session().idleTtl();
         // weak keys: the state goes away with the proxy session
-        this.states = Caffeine.newBuilder().weakKeys().expireAfterAccess(idle).build();
+        this.states = idle.isZero() ? Caffeine.newBuilder().weakKeys().build()
+                : Caffeine.newBuilder().weakKeys().expireAfterAccess(idle).build();
     }
 
     /** Backend state of one proxy session; guarded by {@link ProxySession#lock()}. */
@@ -99,12 +104,22 @@ public class QuickViewClient {
         HtmlForms.@Nullable Form form;
         @Nullable String pageUrl;
         @Nullable String userAgent;
+        /* AutoSys URL of this session, from the configured ones; the next one after AutoSys dropped it */
+        URI base;
+        int baseIndex;
+        /* the session is the browser's (borrowed cookies or page), not the proxy's own login */
+        boolean borrowed;
         /* when this session last sent a request to AutoSys */
         volatile long lastSentNanos;
+
+        State(URI base) {
+            this.base = base;
+        }
 
         void reset() {
             cookies.clear();
             loggedIn = false;
+            borrowed = false;
             form = null;
             pageUrl = null;
             usedPage = null;
@@ -352,10 +367,10 @@ public class QuickViewClient {
     }
 
     private Exchange postPartial(State state, Map<String, String> fields) {
-        HttpPost post = new HttpPost(base.resolve(state.form.action()));
+        HttpPost post = new HttpPost(state.base.resolve(state.form.action()));
         post.setHeader("Tr-XHR-Message", "true");
         post.setHeader("Accept", "*/*");
-        post.setHeader("Origin", origin());
+        post.setHeader("Origin", origin(state));
         if (state.pageUrl != null) {
             post.setHeader("Referer", state.pageUrl);
         }
@@ -378,7 +393,7 @@ public class QuickViewClient {
         if (!m.find()) {
             return null;
         }
-        URI page = state.pageUrl != null ? URI.create(state.pageUrl) : base.resolve(state.form.action());
+        URI page = state.pageUrl != null ? URI.create(state.pageUrl) : state.base.resolve(state.form.action());
         URI dialog;
         try {
             dialog = page.resolve(m.group());
@@ -387,7 +402,7 @@ public class QuickViewClient {
                     e.getMessage());
             return null;
         }
-        if (dialog.getHost() != null && !dialog.getRawAuthority().equalsIgnoreCase(base.getRawAuthority())) {
+        if (dialog.getHost() != null && !dialog.getRawAuthority().equalsIgnoreCase(state.base.getRawAuthority())) {
             return null;
         }
         return withParams(dialog, page.toString(), state.form.action());
@@ -422,7 +437,7 @@ public class QuickViewClient {
         URI action = form.action().isEmpty() ? dialog : withParams(dialog.resolve(form.action()), dialog.toString());
         HttpPost post = new HttpPost(action);
         post.setHeader("Accept", "text/html,application/xhtml+xml,*/*;q=0.8");
-        post.setHeader("Origin", origin());
+        post.setHeader("Origin", origin(state));
         post.setHeader("Referer", dialog.toString());
         post.setEntity(new StringEntity(formBody(fields),
                 ContentType.APPLICATION_FORM_URLENCODED.withCharset(StandardCharsets.UTF_8)));
@@ -472,19 +487,29 @@ public class QuickViewClient {
     }
 
     private State state(ProxySession session) {
-        State state = states.get(session, s -> new State());
+        State state = states.get(session, s -> new State(bases.getFirst()));
         state.userAgent = session.browserUserAgent();
         return state;
     }
 
     private String search(ProxySession session, State state, String jobName) {
         String lastProblem = "no attempt";
-        for (int attempt = 1; attempt <= Math.max(1, quickview.maxAttempts()); attempt++) {
+        int attempts = Math.max(1, quickview.maxAttempts()) + bases.size() - 1;
+        for (int attempt = 1; attempt <= attempts; attempt++) {
             if (state.form == null && !useBrowserPage(session, state)) {
                 open(session, state);
             }
-            Exchange response = postSearch(state, jobName);
-            String problem = partialResponseProblem(response);
+            String problem;
+            Exchange response = null;
+            try {
+                response = postSearch(state, jobName);
+                problem = partialResponseProblem(response);
+            } catch (BackendException e) {
+                if (!e.type().equals(UNREACHABLE)) {
+                    throw e;
+                }
+                problem = e.getMessage();
+            }
             if (problem == null) {
                 remember(state, response.body());
                 return response.body();
@@ -493,12 +518,30 @@ public class QuickViewClient {
             if (state.usedPage != null) {
                 state.failedPage = state.usedPage;
             }
-            log.info("[backend] Quick View session of '{}' is no longer valid ({}); logging in again",
-                    session.username(), problem);
+            boolean own = !state.borrowed;
             state.reset();
+            // the proxy's own AutoSys session was dropped: the next login goes to the next URL
+            String next = own ? nextBase(state) : null;
+            log.info("[backend] Quick View session of '{}' is no longer valid ({}); logging in again{}",
+                    session.username(), problem, next == null ? "" : " on " + next);
         }
         throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-session",
                 "AutoSys Quick View did not accept the request: " + lastProblem);
+    }
+
+    /** Moves the session to the next configured AutoSys URL; returns it, or null when there is only one. */
+    private @Nullable String nextBase(State state) {
+        if (bases.size() < 2) {
+            return null;
+        }
+        state.baseIndex = (state.baseIndex + 1) % bases.size();
+        state.base = bases.get(state.baseIndex);
+        return state.base.toString();
+    }
+
+    /** Whether the session's AutoSys URL is the browser's, so the browser's cookies and pages are valid there. */
+    private boolean onBrowserBase(State state) {
+        return state.base.getRawAuthority().equalsIgnoreCase(browserBase.getRawAuthority());
     }
 
     /**
@@ -507,7 +550,7 @@ public class QuickViewClient {
      */
     private boolean useBrowserPage(ProxySession session, State state) {
         BrowserPage page = session.quickViewPage();
-        if (!quickview.reuseBrowserPage()) {
+        if (!quickview.reuseBrowserPage() || !onBrowserBase(state)) {
             return false;
         }
         if (page == null || page == state.failedPage) {
@@ -528,8 +571,9 @@ public class QuickViewClient {
         }
         cookies.forEach(state.cookies::putBrowser);
         state.form = new HtmlForms.Form(page.action(), page.fields());
-        state.pageUrl = base.resolve(page.pageUrl() != null ? page.pageUrl() : page.action()).toString();
+        state.pageUrl = state.base.resolve(page.pageUrl() != null ? page.pageUrl() : page.action()).toString();
         state.loggedIn = true;
+        state.borrowed = true;
         state.usedPage = page;
         log.info("[backend] using the browser's Quick View page for '{}' (seen at {}, cookies {})",
                 session.username(), page.seenAt(), state.cookies.names());
@@ -543,7 +587,7 @@ public class QuickViewClient {
     private void open(ProxySession session, State state) {
         boolean borrowed = false;
         // tried on every opening: the browser's cookies change as the user moves around the UI
-        if (!state.loggedIn && quickview.reuseBrowserSession()) {
+        if (!state.loggedIn && quickview.reuseBrowserSession() && onBrowserBase(state)) {
             state.cookies.store(login.path(), session.autosysCookies());
             session.browserCookies().forEach((name, values) -> {
                 if (quickview.excludeBrowserCookies().stream().noneMatch(name::equalsIgnoreCase)) {
@@ -556,13 +600,13 @@ public class QuickViewClient {
                         session.username(), PendingTokenStore.BROWSER_COOKIE);
             } else {
                 state.loggedIn = true;
-                borrowed = true;
+                state.borrowed = borrowed = true;
             }
         }
         if (!state.loggedIn) {
-            login(session, state);
+            loginOnAnyBase(session, state);
         }
-        Landing page = get(state, entryUri(session), base.resolve(quickview.entryReferer()).toString());
+        Landing page = get(state, entryUri(session, state), state.base.resolve(quickview.entryReferer()).toString());
         HtmlForms.Form form = quickViewForm(page);
         if (form == null && borrowed) {
             log.info("[backend] the browser's AutoSys session of '{}' did not open Quick View (ended at {} with "
@@ -571,8 +615,8 @@ public class QuickViewClient {
                     snippet(page.exchange().body()));
             state.reset();
             borrowed = false;
-            login(session, state);
-            page = get(state, entryUri(session), base.resolve(quickview.entryReferer()).toString());
+            loginOnAnyBase(session, state);
+            page = get(state, entryUri(session, state), state.base.resolve(quickview.entryReferer()).toString());
             form = quickViewForm(page);
         }
         if (form == null) {
@@ -594,15 +638,37 @@ public class QuickViewClient {
         state.form = form;
         state.pageUrl = page.uri().toString();
         log.info("[backend] Quick View opened for '{}' with {} ({} form fields, cookies {})", session.username(),
-                borrowed ? "the browser's AutoSys session" : "the proxy's own login", form.fields().size(),
-                state.cookies.names());
+                borrowed ? "the browser's AutoSys session" : "the proxy's own login on " + state.base,
+                form.fields().size(), state.cookies.names());
     }
 
     private HtmlForms.@Nullable Form quickViewForm(Landing page) {
         return page.exchange().status() == 200 ? HtmlForms.find(page.exchange().body(), quickview.form()) : null;
     }
 
+    /** The proxy's own login on the session's URL; on the next ones in turn while AutoSys is unreachable. */
+    private void loginOnAnyBase(ProxySession session, State state) {
+        for (int tried = 1; ; tried++) {
+            try {
+                login(session, state);
+                return;
+            } catch (BackendException e) {
+                if (!e.type().equals(UNREACHABLE) || tried >= bases.size()) {
+                    throw e;
+                }
+                state.reset();
+                log.info("[backend] AutoSys at {} unreachable for '{}' ({}); logging in on {}", state.base,
+                        session.username(), e.getMessage(), nextBase(state));
+            }
+        }
+    }
+
     private void login(ProxySession session, State state) {
+        if (session.loginRejected() != null) {
+            throw new BackendException(HttpStatus.CONFLICT, "autosys-login-rejected", "AutoSys rejected the stored "
+                    + "password of '" + session.username() + "' (" + session.loginRejected() + "); the proxy does "
+                    + "not try it again, so the account is not locked. Log in to AutoSys through the proxy again");
+        }
         LoginTemplate template = session.loginTemplate();
         if (template == null) {
             throw new BackendException(HttpStatus.CONFLICT, "login-not-recorded",
@@ -613,14 +679,14 @@ public class QuickViewClient {
                     "autosys.webui.login.path must be a literal path for the proxy's own login, not a pattern");
         }
         if (quickview.loginPage() != null) {
-            get(state, base.resolve(quickview.loginPage()));
+            get(state, state.base.resolve(quickview.loginPage()));
         }
-        String referer = base.resolve(quickview.loginPage() != null ? quickview.loginPage()
+        String referer = state.base.resolve(quickview.loginPage() != null ? quickview.loginPage()
                 : startPage != null ? startPage : "/").toString();
-        URI uri = base.resolve(login.path());
+        URI uri = state.base.resolve(login.path());
         HttpPost post = new HttpPost(uri);
         template.headers().forEach(post::setHeader);
-        post.setHeader("Origin", origin());
+        post.setHeader("Origin", origin(state));
         post.setHeader("Referer", referer);
         String body = vault.withPassword(session.credentials(), template::body);
         post.setEntity(new StringEntity(body, ContentType.parse(template.contentType())));
@@ -628,8 +694,10 @@ public class QuickViewClient {
 
         LoginClassifier.Result result = classifier.classify(response.status(), response.location(),
                 response.setCookies(), response.body());
-        audit.backendLogin(session.username(), session.sessionId(), result.success(), result.reason());
+        audit.backendLogin(session.username(), session.sessionId(), result.success(),
+                result.reason() + " on " + state.base);
         if (!result.success()) {
+            session.loginRejected(result.reason() + " on " + state.base);
             log.warn("[backend] AutoSys rejected the proxy's login for '{}': {}; response {} {}, cookies {}, "
                     + "body: {}; sent headers {}", session.username(), result.reason(), response.status(),
                     response.contentType(), response.setCookies().stream().map(c -> c.split("=", 2)[0]).toList(),
@@ -641,7 +709,8 @@ public class QuickViewClient {
             get(state, uri.resolve(response.location()));
         }
         state.loggedIn = true;
-        log.info("[backend] logged in to AutoSys as '{}' (cookies {})", session.username(), state.cookies.names());
+        log.info("[backend] logged in to AutoSys at {} as '{}' (cookies {})", state.base, session.username(),
+                state.cookies.names());
         if (state.cookies.names().isEmpty()) {
             log.warn("[backend] the login response set no cookies: the AutoSys UI probably sets its session cookie "
                     + "in JavaScript, which the proxy's own login cannot do. Use the API after browsing AutoSys "
@@ -752,14 +821,14 @@ public class QuickViewClient {
      * The entry page as the UI's launcher opens it: {@code index.jsp?randomId=..&AntiXSRFToken=..}
      * with the token the browser sent; without one AutoSys answers 403.
      */
-    private URI entryUri(ProxySession session) {
+    private URI entryUri(ProxySession session, State state) {
         String token = session.xsrfToken();
         if (token == null) {
             log.info("[backend] no {} seen from the browser of '{}' yet; opening Quick View without it",
                     quickview.xsrfParam(), session.username());
-            return base.resolve(quickview.entryPath());
+            return state.base.resolve(quickview.entryPath());
         }
-        return base.resolve(quickview.entryPath() + "?randomId=" + ThreadLocalRandom.current().nextLong(1L << 52)
+        return state.base.resolve(quickview.entryPath() + "?randomId=" + ThreadLocalRandom.current().nextLong(1L << 52)
                 + "&" + URLEncoder.encode(quickview.xsrfParam(), StandardCharsets.UTF_8) + "="
                 + URLEncoder.encode(token, StandardCharsets.UTF_8));
     }
@@ -781,7 +850,7 @@ public class QuickViewClient {
                 return new Landing(current, response);
             }
             URI next = current.resolve(response.location());
-            if (next.getHost() != null && !next.getAuthority().equalsIgnoreCase(base.getAuthority())) {
+            if (next.getHost() != null && !next.getAuthority().equalsIgnoreCase(state.base.getAuthority())) {
                 throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-redirect",
                         "AutoSys redirected to another host (" + next.getHost() + "); not supported");
             }
@@ -833,8 +902,8 @@ public class QuickViewClient {
         return s.length() > 300 ? s.substring(0, 300) + "..." : s;
     }
 
-    private String origin() {
-        return base.getScheme() + "://" + base.getRawAuthority();
+    private static String origin(State state) {
+        return state.base.getScheme() + "://" + state.base.getRawAuthority();
     }
 
     static Map<String, String> queryParams(String url) {

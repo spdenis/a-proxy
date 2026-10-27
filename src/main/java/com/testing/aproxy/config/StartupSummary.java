@@ -2,6 +2,7 @@ package com.testing.aproxy.config;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import com.testing.aproxy.proxy.LoginClassifier;
 import com.testing.aproxy.proxy.ProxyPaths;
@@ -44,6 +45,9 @@ public class StartupSummary {
                 ? "loaded " + userProperties : "no " + userProperties + " found, using defaults");
         log.info("AutoSys UI:   {}{}/  ->  {} (environment {})", base, paths.prefix(), properties.baseUrl(),
                 properties.environment());
+        if (!properties.backendUrls().equals(List.of(properties.baseUrl()))) {
+            log.info("AutoSys URLs for the proxy's own logins, in turn: {}", properties.backendUrls());
+        }
         log.info("Token page:   {}{}   (after logging in on the AutoSys page)", base, ProxyPaths.TOKEN_PAGE);
         log.info("API:          {}/api/v1/session, {}/api/v1/jobs/<name>  (send the token as a Bearer token in the "
                 + "Authorization header)", base, base);

@@ -5,6 +5,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -56,7 +57,9 @@ public class SessionRegistry {
         this.absoluteTtl = properties.session().absoluteTtl();
         this.bindClientIp = properties.token().bindClientIp();
         this.browserUseCounts = properties.session().browserUseCounts();
-        this.closed = Caffeine.newBuilder().expireAfterWrite(absoluteTtl.multipliedBy(2)).maximumSize(10_000).build();
+        this.closed = Caffeine.newBuilder()
+                .expireAfterWrite(absoluteTtl.isZero() ? Duration.ofDays(7) : absoluteTtl.multipliedBy(2))
+                .maximumSize(10_000).build();
         this.sessions = Caffeine.newBuilder()
                 .ticker(() -> TimeUnit.MILLISECONDS.toNanos(clock.millis()))
                 .scheduler(Scheduler.systemScheduler())
@@ -81,7 +84,7 @@ public class SessionRegistry {
         String tokenHash = TokenService.hash(token);
         ProxySession session = new ProxySession(username, tokenHash, vault.seal(password), clientIp, loginTemplate,
                 autosysCookies, now,
-                now.plus(absoluteTtl));
+                absoluteTtl.isZero() ? null : now.plus(absoluteTtl));
         String browserKey = tokens.newToken().substring(TokenService.PREFIX.length());
         session.browserKeyHash(TokenService.hash(browserKey));
         tokenHashByBrowserKey.put(session.browserKeyHash(), tokenHash);
@@ -163,9 +166,14 @@ public class SessionRegistry {
         return Optional.ofNullable(sessions.policy().getIfPresentQuietly(TokenService.hash(token)));
     }
 
-    public Instant idleExpiresAt(ProxySession session) {
-        Instant idle = session.lastUsedAt().plus(idleTtl);
-        return idle.isBefore(session.absoluteExpiresAt()) ? idle : session.absoluteExpiresAt();
+    /** When the session expires unless it is used again; null = never (no idle and no absolute expiry). */
+    public @Nullable Instant idleExpiresAt(ProxySession session) {
+        Instant idle = idleTtl.isZero() ? null : session.lastUsedAt().plus(idleTtl);
+        Instant absolute = session.absoluteExpiresAt();
+        if (idle == null || absolute == null) {
+            return idle == null ? absolute : idle;
+        }
+        return idle.isBefore(absolute) ? idle : absolute;
     }
 
     public void revoke(ProxySession session) {
@@ -199,11 +207,12 @@ public class SessionRegistry {
         }
         session.close();
         Reason reason = shuttingDown ? Reason.SHUTDOWN : switch (cause) {
-            case EXPIRED -> clock.instant().isBefore(session.absoluteExpiresAt()) ? Reason.IDLE : Reason.ABSOLUTE;
+            case EXPIRED -> session.absoluteExpiresAt() == null || clock.instant().isBefore(session.absoluteExpiresAt())
+                    ? Reason.IDLE : Reason.ABSOLUTE;
             default -> Reason.REVOKED;
         };
         Instant at = switch (reason) {
-            case IDLE, ABSOLUTE -> idleExpiresAt(session);
+            case IDLE, ABSOLUTE -> Objects.requireNonNullElse(idleExpiresAt(session), clock.instant());
             default -> clock.instant();
         };
         // a replaced session has its reason already
@@ -240,11 +249,13 @@ public class SessionRegistry {
             return remaining(session);
         }
 
+        /* counted from now: each read is a use of the session (0 = no such limit) */
         private long remaining(ProxySession session) {
-            Instant now = clock.instant();
-            Duration untilAbsolute = Duration.between(now, session.absoluteExpiresAt());
-            Duration ttl = untilAbsolute.compareTo(idleTtl) < 0 ? untilAbsolute : idleTtl;
-            return Math.max(0, ttl.toNanos());
+            Instant absolute = session.absoluteExpiresAt();
+            Duration untilAbsolute = absolute == null ? null : Duration.between(clock.instant(), absolute);
+            Duration ttl = idleTtl.isZero() ? untilAbsolute
+                    : untilAbsolute == null || idleTtl.compareTo(untilAbsolute) < 0 ? idleTtl : untilAbsolute;
+            return ttl == null ? Long.MAX_VALUE : Math.max(0, ttl.toNanos());
         }
     }
 

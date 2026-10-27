@@ -57,6 +57,19 @@ class SessionRegistryTest {
     }
 
     @Test
+    void zeroTtlsNeverExpire() {
+        var forever = new SessionRegistry(properties(Duration.ZERO, Duration.ZERO), vault, new TokenService(),
+                new AuditLogger(), clock);
+        var issued = forever.create("alice", "pw".toCharArray(), null);
+
+        clock.advance(Duration.ofDays(30));
+        assertThat(forever.idleExpiresAt(issued.session())).isNull();
+        assertThat(forever.authenticate(issued.token(), null)).isPresent();
+        forever.create("alice", "pw2".toCharArray(), null);
+        assertThat(forever.authenticate(issued.token(), null)).isEmpty();
+    }
+
+    @Test
     void browserUseRefreshesTheIdleTimer() {
         var issued = registry.create("alice", "pw".toCharArray(), null);
 
@@ -131,14 +144,14 @@ class SessionRegistryTest {
     }
 
     static AutosysProperties properties(Duration idle, Duration absolute) {
-        return new AutosysProperties(URI.create("https://autosys.example.internal"), Set.of("DEV"), "DEV",
+        return new AutosysProperties(URI.create("https://autosys.example.internal"), null, Set.of("DEV"), "DEV",
                 new AutosysProperties.Proxy("", false, true, true, null),
                 new AutosysProperties.Session(idle, absolute, Duration.ofMinutes(5), true),
                 null, new AutosysProperties.Token(false), null, null, null, null);
     }
 
     static AutosysProperties propertiesWithIpBinding() {
-        return new AutosysProperties(URI.create("https://autosys.example.internal"), Set.of("DEV"), "DEV",
+        return new AutosysProperties(URI.create("https://autosys.example.internal"), null, Set.of("DEV"), "DEV",
                 new AutosysProperties.Proxy("", false, true, true, null),
                 new AutosysProperties.Session(Duration.ofHours(8), Duration.ofHours(24), Duration.ofMinutes(5), true),
                 null, new AutosysProperties.Token(true), null, null, null, null);

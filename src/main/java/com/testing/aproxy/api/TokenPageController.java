@@ -1,5 +1,6 @@
 package com.testing.aproxy.api;
 
+import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 
@@ -68,10 +69,17 @@ public class TokenPageController {
         return defaultNext;
     }
 
+    private static String expiry(@Nullable Instant idle, @Nullable Instant absolute) {
+        if (idle == null) {
+            return "only when you log in through the proxy again or revoke it";
+        }
+        return absolute == null || absolute.equals(idle) ? TIME.format(idle)
+                : TIME.format(idle) + " (idle), at the latest " + TIME.format(absolute);
+    }
+
     private String tokenPage(PendingTokenStore.PendingToken pending, String home) {
         String expires = sessions.peek(pending.token())
-                .map(s -> TIME.format(sessions.idleExpiresAt(s)) + " (idle), at the latest "
-                        + TIME.format(s.absoluteExpiresAt()))
+                .map(s -> expiry(sessions.idleExpiresAt(s), s.absoluteExpiresAt()))
                 .orElse("-");
         return page("API token", """
                 <p>Logged in to AutoSys as <b>%s</b>. Use this token from scripts and tools:</p>

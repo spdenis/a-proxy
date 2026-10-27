@@ -23,7 +23,7 @@ class EnvironmentGuardTest {
     }
 
     private static AutosysProperties props(String env, Set<String> allowed) {
-        return new AutosysProperties(URI.create("https://autosys.example.internal"), allowed, env,
+        return new AutosysProperties(URI.create("https://autosys.example.internal"), null, allowed, env,
                 null, null, null, null, null, null, null, null);
     }
 }
