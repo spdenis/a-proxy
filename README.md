@@ -278,8 +278,10 @@ Any other error before Yes (`autosys-session`, `autosys-unexpected-response`, ..
   `rate-limited`.
 - **Turning it off:** `autosys.actions.enabled=false` answers 403 `actions-disabled`.
 - **Environments:** the proxy only starts for `allowed-environments`, so actions are available in those only.
-- **Other actions:** `STARTJOB` and `KILLJOB` go through the same steps but have not been tried against AutoSys yet. They
-  need a dropdown option labelled "Start" / "Kill" (with or without "Job"), or an `event-ids` entry.
+- **Other actions:** `STARTJOB` goes through the same steps but has not been tried against AutoSys yet. It needs a
+  dropdown option labelled "Start" (with or without "Job"), or an `event-ids` entry.
+- **Kill:** `KILLJOB` is sent exactly like force start, with the "Kill" / "Kill Job" option of the same dropdown
+  (Go, then Yes). Not yet tried against AutoSys.
 - **Logs:** the proxy logs AutoSys's answer to Yes, with secrets masked, as `[backend] 'user' confirmed ...`.
 
 ### Job actions: change status (Send Event)
@@ -294,7 +296,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 `TERMINATED` (matched to the dialog's labels; a status it does not offer is `REJECTED`, nothing sent). It is what you
 do in Quick View with **Send Event**:
 
-1. Steps 1–3 of force start, with **Send Event** in the results' dropdown (`event-ids` `CHANGE_STATUS: "10"` when the
+1. Steps 1–3 of force start, with **Send Event** in the results' dropdown (`event-ids` `SEND_EVENT: "10"` when the
    page lists no labels), then **Go**.
 2. It opens the Send Event dialog that Go asks for (`autosysSendEvent.jsf`, form `sendeventDialog`).
 3. It chooses **Change Status** in the dialog's event dropdown (`eventId`, a partial-page event; `send-event.event-ids`

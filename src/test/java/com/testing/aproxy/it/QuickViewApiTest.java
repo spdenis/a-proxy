@@ -612,6 +612,28 @@ class QuickViewApiTest {
     }
 
     @Test
+    void killIsSentLikeForceStart() throws Exception {
+        stubEvents("event-go.xml", 200);
+        autosys.stubFor(post(urlEqualTo(SEARCH)).atPriority(3).withRequestBody(containing("source=goButtonID&"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/xml;charset=utf-8")
+                        .withBody(resource("job.xml").replace("<option value=\"3\">Off Hold</option>",
+                                "<option value=\"3\">Off Hold</option><option value=\"8\">Kill Job</option>"))));
+        String token = login();
+
+        HttpResponse<String> response = action("TEST_FX_LOADER", token, "{\"action\":\"KILLJOB\"}", null);
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+        JsonNode result = JsonMapper.shared().readTree(response.body());
+        assertThat(result.at("/outcome").asString()).isEqualTo("ACCEPTED");
+        assertThat(result.at("/event").asString()).isEqualTo("Kill Job");
+
+        autosys.verify(1, postRequestedFor(urlEqualTo(SEARCH))
+                .withRequestBody(containing("jobResultTable%3AeventId=8&"))
+                .withRequestBody(containing("source=jobResultTable%3AsendEventButton&")));
+        autosys.verify(1, postRequestedFor(urlPathEqualTo(DIALOG)));
+        autosys.verify(0, com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor(urlPathEqualTo(SEND_DIALOG)));
+    }
+
+    @Test
     void changeStatusNeedsAStatusTheDialogOffers() throws Exception {
         stubSendEvent();
         String token = login();

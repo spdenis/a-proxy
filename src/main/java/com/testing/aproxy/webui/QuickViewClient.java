@@ -54,6 +54,8 @@ public class QuickViewClient {
     private static final Logger log = LoggerFactory.getLogger(QuickViewClient.class);
     private static final String VIEW_STATE = "javax.faces.ViewState";
     private static final String TRINIDAD_FORM = "org.apache.myfaces.trinidad.faces.FORM";
+    /** The key of the "Send Event" option in autosys.webui.quickview.event-ids. */
+    private static final String SEND_EVENT_ID = "SEND_EVENT";
     private static final int MAX_REDIRECTS = 6;
     private static final int MAX_BODY = 16 * 1024 * 1024;
     private static final Pattern QUERY_PARAM = Pattern.compile("[?&]([^=&#]+)=([^&#]*)");
@@ -211,10 +213,15 @@ public class QuickViewClient {
                         + (page.results().isEmpty() ? "" : " (the search shows " + page.results().size() + " jobs)"));
             }
             String job = page.attributes().get("Name");
-            EventChoice choice = choose(found, action);
+            // the action's option of the results' dropdown, or Send Event for an event of its dialog
+            boolean inDialog = action.dialogEvent() != null;
+            EventChoice choice = inDialog
+                    ? choose(found, JobAction.SEND_EVENT, quickview.eventIds().getOrDefault(SEND_EVENT_ID,
+                            quickview.eventIds().get(action.name())))
+                    : choose(found, action.label(), quickview.eventIds().get(action.name()));
             if (choice == null) {
                 Map<String, String> offered = HtmlForms.selects(found).getOrDefault(quickview.eventSelect(), Map.of());
-                return new EventResult(job, Outcome.REJECTED, null, null, "Quick View offers no " + action.label()
+                return new EventResult(job, Outcome.REJECTED, null, null, "Quick View offers no " + action.title()
                         + " for job " + job + " (it offers " + String.join(", ", offered.values()) + ")", null);
             }
             String what = choice.label() + " of job " + job;
@@ -226,7 +233,7 @@ public class QuickViewClient {
             requirePartial(state, go, "pressing Go for " + what);
             remember(state, go.body());
 
-            String dialogPath = action.dialogEvent() != null ? quickview.sendEvent().path()
+            String dialogPath = inDialog ? quickview.sendEvent().path()
                     : quickview.confirmationPath();
             URI dialog = dialogUri(state, go.body(), dialogPath);
             if (dialog == null) {
@@ -240,7 +247,7 @@ public class QuickViewClient {
                 throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-unexpected-response",
                         "Quick View did not open its dialog for " + what + "; the event was not sent");
             }
-            if (action.dialogEvent() != null) {
+            if (inDialog) {
                 return sendInDialog(session, state, found, job, choice, action, status, comment, dialog,
                         readStatusAfter);
             }
@@ -467,10 +474,10 @@ public class QuickViewClient {
     }
 
     /**
-     * The dropdown option of an action: found by its label when the response lists the options, else the
-     * configured value. Null when the dropdown does not offer the action.
+     * The dropdown option with {@code label}: found by its label when the response lists the options, else the
+     * configured value. Null when the dropdown does not offer it.
      */
-    private @Nullable EventChoice choose(String found, JobAction action) {
+    private @Nullable EventChoice choose(String found, String label, @Nullable String configured) {
         Map<String, Map<String, String>> selects = HtmlForms.selects(found);
         String select = quickview.eventSelect();
         String button = quickview.eventButton();
@@ -484,10 +491,10 @@ public class QuickViewClient {
                 button = table + (button.contains(":") ? button.substring(button.lastIndexOf(':')) : ":" + button);
             }
         }
-        String configured = quickview.eventIds().get(action.name());
         Map<String, String> options = selects.getOrDefault(select, Map.of());
         if (!options.isEmpty()) {
-            Map.Entry<String, String> option = options.entrySet().stream().filter(e -> action.matches(e.getValue()))
+            Map.Entry<String, String> option = options.entrySet().stream()
+                    .filter(e -> JobAction.offers(e.getValue(), label))
                     .findFirst().orElse(null);
             if (option == null) {
                 return null;
@@ -501,10 +508,10 @@ public class QuickViewClient {
         }
         if (configured == null) {
             throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-unexpected-response", "Quick View did not "
-                    + "list its job events and autosys.webui.quickview.event-ids has no value for " + action
+                    + "list its job events and autosys.webui.quickview.event-ids has no value for " + label
                     + "; the event was not sent");
         }
-        return new EventChoice(select, button, configured, action.label());
+        return new EventChoice(select, button, configured, label);
     }
 
     private void requirePartial(State state, Exchange response, String step) {

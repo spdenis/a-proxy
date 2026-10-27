@@ -82,7 +82,8 @@ autosys:
       event-button: jobResultTable:sendEventButton
       event-ids:                    # dropdown values, when the page does not list the options' labels
         FORCE_STARTJOB: "1"
-        CHANGE_STATUS: "10"         # "Send Event": opens the Send Event dialog
+        KILLJOB: "8"
+        SEND_EVENT: "10"            # opens the Send Event dialog (Change Status)
       confirmation-path: /wcc/quickview/pages/dialog/confirmationDialog.jsf
       confirmation-form: confirmationDialog
       confirm-button: sendEvtYes
