@@ -630,11 +630,14 @@ class QuickViewApiTest {
 
         autosys.verify(1, postRequestedFor(urlEqualTo(SEARCH))
                 .withRequestBody(containing("boxJobResultTable%3AeventId=8&"))
+                .withRequestBody(containing("boxJobResultTable%3A_s=0&"))
                 .withRequestBody(containing("boxJobResultTable%3A_sm=&"))
                 .withRequestBody(containing("source=boxJobResultTable%3AeventId&")));
         autosys.verify(1, postRequestedFor(urlEqualTo(SEARCH))
                 .withRequestBody(containing("boxJobResultTable%3AeventId=8&"))
+                .withRequestBody(containing("boxJobResultTable%3A_s=0&"))
                 .withRequestBody(containing("source=boxJobResultTable%3AsendEventTreeButton&"))
+                .withRequestBody(com.github.tomakehurst.wiremock.client.WireMock.notContaining("_sm="))
                 .withRequestBody(com.github.tomakehurst.wiremock.client.WireMock.notContaining("sendEventButton")));
         autosys.verify(1, postRequestedFor(urlPathEqualTo(DIALOG)));
     }

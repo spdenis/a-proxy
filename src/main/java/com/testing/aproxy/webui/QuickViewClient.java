@@ -10,9 +10,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -533,18 +531,28 @@ public class QuickViewClient {
 
     /** Chooses the event in the dropdown ({@code choosing}), or presses Go with it chosen. */
     /**
-     * The Go button of another results table, as its page names it: a box's tree table has
-     * {@code boxJobResultTable:sendEventTreeButton}, not the job table's {@code sendEventButton}.
+     * The Go button of another results table, as its page names it (in a field, an id or a script): a box's
+     * tree table has {@code boxJobResultTable:sendEventTreeButton}, not the job table's {@code sendEventButton}.
      */
     private static String tableButton(String found, String table, String derived) {
-        Set<String> names = HtmlForms.inputs(found).keySet();
-        if (names.contains(derived)) {
+        if (found.contains("'" + derived + "'") || found.contains("\"" + derived + "\"")) {
             return derived;
         }
-        String prefix = table + ":";
-        return names.stream().filter(n -> n.startsWith(prefix))
-                .filter(n -> n.substring(prefix.length()).toLowerCase(Locale.ROOT).matches("sendevent\\w*button"))
-                .findFirst().orElse(derived);
+        Matcher m = Pattern.compile("(?i)['\"](" + Pattern.quote(table) + ":sendEvent\\w*Button)['\"]").matcher(found);
+        return m.find() ? m.group(1) : derived;
+    }
+
+    /** The selection of a tree table's row ({@code <table>:_s}): the value of its first row's radio, else 0. */
+    private static String firstRowSelection(String found, String table) {
+        Matcher input = Pattern.compile("(?is)<input\\b[^>]*\\bname=['\"]" + Pattern.quote(table + ":_s") + "['\"][^>]*>")
+                .matcher(found);
+        if (input.find()) {
+            Matcher value = Pattern.compile("(?i)\\bvalue=['\"]([^'\"]*)['\"]").matcher(input.group());
+            if (value.find()) {
+                return value.group(1);
+            }
+        }
+        return "0";
     }
 
     private Exchange postEvent(State state, String searchResponse, String job, EventChoice choice, boolean choosing) {
@@ -555,15 +563,20 @@ public class QuickViewClient {
         fields.put("source", choosing ? choice.select() : choice.button());
         fields.put("partialTargets", "");
         fields.put("partial", "true");
+        String table = choice.select().contains(":")
+                ? choice.select().substring(0, choice.select().lastIndexOf(':')) : null;
+        if (table != null && fields.containsKey(table + ":_us")) {
+            // a tree table (a box's): its row selected as in the browser (_s=0), and _sm only while choosing
+            fields.putIfAbsent(table + ":_s", firstRowSelection(searchResponse, table));
+            if (choosing) {
+                fields.put(table + ":_sm", "");
+            } else {
+                fields.remove(table + ":_sm");
+            }
+        }
         if (choosing) {
             fields.put("state", "");
             fields.put("value", "");
-            // a tree table (a box's) also sends its selection, empty, as the browser does
-            String table = choice.select().contains(":")
-                    ? choice.select().substring(0, choice.select().lastIndexOf(':')) : null;
-            if (table != null && fields.containsKey(table + ":_us")) {
-                fields.putIfAbsent(table + ":_sm", "");
-            }
         }
         fields.put("event", quickview.eventEvent());
         if (log.isDebugEnabled()) {
