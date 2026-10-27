@@ -367,8 +367,10 @@ For one request in full detail (the `seq` numbers are in the TIMELINE):
 ```
 
 The dump has every query parameter and form field with its value, the request headers that matter (CSRF, `X-*`,
-JSF/Trinidad), the response's partial-page fragment ids and hidden inputs (e.g. `javax.faces.ViewState`), and each
-data table: id, header cells and the first rows.
+JSF/Trinidad), the response's partial-page fragment ids and hidden inputs (e.g. `javax.faces.ViewState`), its form
+controls (each dropdown with all its options as `value = label`, visible inputs, radio buttons and check boxes with
+their labels, buttons and links with their `onclick`/`onchange` script), and each data table: id, header cells and
+the first rows. `--width=200` shows longer scripts.
 
 To find where a text occurs in the whole run, with the raw markup around each match:
 

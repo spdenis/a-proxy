@@ -55,6 +55,36 @@ class CaptureDumpTest {
     }
 
     @Test
+    void dumpsDropdownsInputsAndButtons() {
+        ObjectNode c = (ObjectNode) JsonMapper.shared().readTree("""
+                {"seq":51,"request":{"method":"GET","autosysPath":"/wcc/quickview/pages/dialog/eventDialog.jsf"},
+                 "response":{"status":200,"contentType":"text/html","bodyLength":700,"headers":{}}}""");
+        c.withObject("/response").put("body", """
+                <form id="eventDialog"><label for="evType">Event</label>
+                <select id="evType" name="evType" onchange="_adfspu('eventDialog',1,0,'evType')">
+                  <option value="0">Force Start Job</option><option value="7" selected>Change Status</option>
+                </select>
+                <select name="status" disabled><option value="RU">Running<option value="SU">Success</option></select>
+                <input type="hidden" name="javax.faces.ViewState" value="!1">
+                <input type="text" id="comment" name="comment" value="">
+                <input type="checkbox" name="all" checked>
+                <button id="okBtn" onclick="submitForm('eventDialog',1,{source:'okBtn'});return false">OK</button>
+                <a id="cancel" href="#" onclick="return _cancel()">Cancel</a></form>""");
+
+        String dump = new CaptureDump(10, false, 80).dump(c);
+
+        assertThat(dump)
+                .contains("-- dropdowns (option value = label)")
+                .contains("name=evType [Event] script=_adfspu('eventDialog',1,0,'evType')")
+                .contains("    0 = Force Start Job", "    7 = Change Status [selected]")
+                .contains("name=status [disabled]", "    RU = Running", "    SU = Success")
+                .contains("-- visible inputs", "text name=comment value=", "checkbox name=all [checked]")
+                .doesNotContain("text name=javax.faces.ViewState")
+                .contains("button id=okBtn script=submitForm('eventDialog',1,{source:'okBtn'});return false text=OK")
+                .contains("link id=cancel script=return _cancel() text=Cancel");
+    }
+
+    @Test
     void parsesNestedTables() {
         List<HtmlTables.Table> tables = HtmlTables.parse(PPR);
         assertThat(tables).hasSize(3);
