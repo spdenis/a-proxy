@@ -15,6 +15,11 @@ public final class HtmlForms {
     private static final Pattern FIELD = Pattern.compile(
             "(?is)<input\\b([^>]*)>|<select\\b([^>]*)>(.*?)</select>|<textarea\\b([^>]*)>(.*?)</textarea>");
     private static final Pattern OPTION = Pattern.compile("(?is)<option\\b([^>]*)>([^<]*)");
+    private static final Pattern BUTTON = Pattern.compile("(?is)<button\\b([^>]*)>(.*?)</button>|<input\\b([^>]*)>");
+    private static final Pattern LABEL = Pattern.compile("(?is)<label\\b([^>]*)>(.*?)</label>");
+    private static final Pattern SUBMIT_SOURCE = Pattern.compile("submitForm\\(\\s*'([^']+)'[^)]*source\\s*:\\s*'([^']+)'");
+    private static final Pattern QUOTED = Pattern.compile("\"[^\"]*\"|'[^']*'");
+    private static final Pattern DISABLED = Pattern.compile("(?i)\\bdisabled\\b");
 
     private HtmlForms() {
     }
@@ -65,6 +70,39 @@ public final class HtmlForms {
         return selects;
     }
 
+    /**
+     * The {@code source} that the button with this text submits form {@code formId} with, as in
+     * {@code onclick="submitForm('form',1,{source:'j_id76'})"}; null when there is no such button.
+     */
+    public static @Nullable String buttonSource(String markup, String formId, String text) {
+        Matcher m = BUTTON.matcher(markup.replace("<![CDATA[", "").replace("]]>", ""));
+        while (m.find()) {
+            String attrs = m.group(1) != null ? m.group(1) : m.group(3);
+            String label = m.group(1) != null ? text(m.group(2)) : String.valueOf(attr(attrs, "value"));
+            String onclick = attr(attrs, "onclick");
+            if (onclick == null || !label.equalsIgnoreCase(text)) {
+                continue;
+            }
+            Matcher submit = SUBMIT_SOURCE.matcher(onclick);
+            if (submit.find() && submit.group(1).equals(formId)) {
+                return submit.group(2);
+            }
+        }
+        return null;
+    }
+
+    /** The id of the field whose label starts with {@code label} (e.g. "Comment" for "Comment:"); null if none. */
+    public static @Nullable String labelledField(String markup, String label) {
+        Matcher m = LABEL.matcher(markup.replace("<![CDATA[", "").replace("]]>", ""));
+        while (m.find()) {
+            String target = attr(m.group(1), "for");
+            if (target != null && text(m.group(2)).toLowerCase(Locale.ROOT).startsWith(label.toLowerCase(Locale.ROOT))) {
+                return target;
+            }
+        }
+        return null;
+    }
+
     /** The text a user reads in some markup: head, scripts, styles and tags removed, whitespace collapsed. */
     public static String text(String markup) {
         String s = markup.replace("<![CDATA[", "").replace("]]>", "")
@@ -77,6 +115,10 @@ public final class HtmlForms {
         Map<String, String> fields = new LinkedHashMap<>();
         Matcher m = FIELD.matcher(formBody);
         while (m.find()) {
+            String own = m.group(1) != null ? m.group(1) : m.group(2) != null ? m.group(2) : m.group(4);
+            if (DISABLED.matcher(QUOTED.matcher(own).replaceAll("")).find()) {
+                continue; // a browser does not submit disabled fields
+            }
             if (m.group(1) != null) {
                 String attrs = m.group(1);
                 String name = attr(attrs, "name");

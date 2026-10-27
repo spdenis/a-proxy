@@ -1,0 +1,6 @@
+<?xml version="1.0" ?>
+<content action="/wcc/quickview/pages/main.jsf?AntiXSRFToken=XSRF-1&amp;conversationContext=1">
+<fragment><![CDATA[<span id="tr_headerForm_Postscript"><input type="hidden" name="javax.faces.ViewState" value="!VS-6"></span>]]></fragment>
+<fragment><![CDATA[<div id="pageMessages">Event CHANGE_STATUS was sent for TEST_FX_LOADER.</div>]]></fragment>
+<fragment><![CDATA[<span id="tr_jobDetailsForm_Postscript"><input type="hidden" name="javax.faces.ViewState" value="!VS-6"></span>]]></fragment>
+</content>

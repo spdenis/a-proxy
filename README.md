@@ -282,6 +282,32 @@ Any other error before Yes (`autosys-session`, `autosys-unexpected-response`, ..
   need a dropdown option labelled "Start" / "Kill" (with or without "Job"), or an `event-ids` entry.
 - **Logs:** the proxy logs AutoSys's answer to Yes, with secrets masked, as `[backend] 'user' confirmed ...`.
 
+### Job actions: change status (Send Event)
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+     -H "Idempotency-Key: $(uuidgen)" -d '{"action":"CHANGE_STATUS","status":"INACTIVE","comment":"reset for rerun"}' \
+     http://localhost:8080/api/v1/jobs/MY_JOB/actions
+```
+
+`status` is one of the statuses the dialog offers: `RUNNING`, `STARTING`, `SUCCESS`, `FAILURE`, `INACTIVE`,
+`TERMINATED` (matched to the dialog's labels; a status it does not offer is `REJECTED`, nothing sent). It is what you
+do in Quick View with **Send Event**:
+
+1. Steps 1–3 of force start, with **Send Event** in the results' dropdown (`event-ids` `CHANGE_STATUS: "10"` when the
+   page lists no labels), then **Go**.
+2. It opens the Send Event dialog that Go asks for (`autosysSendEvent.jsf`, form `sendeventDialog`).
+3. It chooses **Change Status** in the dialog's event dropdown (`eventId`, a partial-page event; `send-event.event-ids`
+   `CHANGE_STATUS: "11"` when it lists no labels). The answer adds the status dropdown (`statusId`).
+4. It chooses the status, puts your `comment` into the dialog's **Comment** field, and presses **OK** (the button with
+   that text; its id is generated, e.g. `j_id76`). Disabled fields are not sent, as in a browser.
+5. When the dialog has closed, it sends the page's return postback (`rtrn=jobResultTable:sendEventButton`), whose
+   page messages are reported as `autosysMessage`, then searches the job for `statusAfter`.
+
+The response has `"status"` and `"event": "Send Event: Change Status INACTIVE"`. Outcomes, the audit line (action
+`CHANGE_STATUS INACTIVE`), `Idempotency-Key` (a key is bound to the job, action and status), limits and the
+never-retried rule after OK are as for force start. Settings: `autosys.webui.quickview.send-event.*`.
+
 ## Copilot skill
 
 `.github/skills/autosys-jobs/` is an agent skill for GitHub Copilot: ask Copilot things like "give me the
@@ -415,7 +441,8 @@ and `--responses` searches only response headers and bodies (where a token is is
 - WebSockets are not proxied (Spring Cloud Gateway MVC does not support them).
 - SSO logins (SAML/OIDC/Kerberos) are out of scope.
 - Multipart logins are not captured.
-- Actions: only force start has been checked against Quick View captures; for boxes it is untried.
+- Actions: force start and change status follow Quick View captures but are untried against a real AutoSys; for
+  boxes they are untried.
 - The proxy's own AutoSys session is not logged out when the proxy session ends; it times out on the AutoSys side.
 - Only the first page of search results is returned.
 

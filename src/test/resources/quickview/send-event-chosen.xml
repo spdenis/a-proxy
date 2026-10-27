@@ -1,0 +1,6 @@
+<?xml version="1.0" ?>
+<content action="/wcc/quickview/pages/dialog/autosysSendEvent.jsf?_afPfm=pf-2">
+<fragment><![CDATA[<div id="pageMessages"></div>]]></fragment>
+<fragment><![CDATA[<table id="j_id19"><tr><td><label for="statusId">Status:</label></td><td><select id="statusId" name="statusId"><option value="0">Running</option><option value="1">Starting</option><option value="2" selected>Success</option><option value="3">Failure</option><option value="4">Inactive</option><option value="5">Terminated</option></select></td></tr></table>]]></fragment>
+<fragment><![CDATA[<span id="tr_sendeventDialog_Postscript"><input type="hidden" name="javax.faces.ViewState" value="!SVS-2"><input type="hidden" name="event"><input type="hidden" name="source"></span>]]></fragment>
+</content>

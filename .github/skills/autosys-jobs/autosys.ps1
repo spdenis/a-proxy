@@ -6,6 +6,7 @@
     Single calls (job, status, deps, runs, jobs, search, session) print the API response.
     Traversals (downstream, upstream, tree) make one call per job and print the collected graph.
     force-start sends FORCE_STARTJOB for one job (only after the user has confirmed it) and prints the outcome.
+    change-status sends CHANGE_STATUS with -Status for one job (only after the user has confirmed it).
 
     The API token (asp_..., from http://localhost:8080/proxy/token) is read from
       AUTOSYS_PROXY_TOKEN       environment variable, if set, else
@@ -18,11 +19,12 @@
     powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 downstream MY_JOB -Depth 3
     powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 tree MY_BOX
     powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 force-start MY_JOB -Comment "rerun after fix"
+    powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 change-status MY_JOB -Status INACTIVE -Comment "reset"
 #>
 param(
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateSet('set-token', 'session', 'job', 'status', 'deps', 'runs', 'jobs', 'search', 'downstream', 'upstream', 'tree',
-        'force-start')]
+        'force-start', 'change-status')]
     [string]$Command,
 
     [Parameter(Position = 1)]
@@ -34,7 +36,11 @@ param(
     # traversals: stop after this many jobs (one API call each)
     [int]$MaxJobs = 100,
 
-    # force-start: why, written to the proxy's audit log
+    # change-status: the new status
+    [ValidateSet('RUNNING', 'STARTING', 'SUCCESS', 'FAILURE', 'INACTIVE', 'TERMINATED')]
+    [string]$Status,
+
+    # force-start, change-status: why, written to the proxy's audit log (and the event's comment)
     [string]$Comment
 )
 
@@ -180,6 +186,15 @@ switch ($Command) {
     # changes AutoSys: run only when the user has asked for it and confirmed the job name
     'force-start' {
         $payload = [ordered]@{ action = 'FORCE_STARTJOB' }
+        if ($Comment) { $payload['comment'] = $Comment }
+        $r = Get-Api (Job-Path $Name '/actions') 'Post' $payload
+        Print $r.body
+        if (-not $r.ok) { exit 1 }
+    }
+
+    'change-status' {
+        if (-not $Status) { Fail "change-status needs -Status (RUNNING, STARTING, SUCCESS, FAILURE, INACTIVE, TERMINATED)" }
+        $payload = [ordered]@{ action = 'CHANGE_STATUS'; status = $Status.ToUpperInvariant() }
         if ($Comment) { $payload['comment'] = $Comment }
         $r = Get-Api (Job-Path $Name '/actions') 'Post' $payload
         Print $r.body

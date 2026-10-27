@@ -190,6 +190,16 @@ public class QuickViewClient {
      * once it is sent nothing is retried, and an unclear answer is {@link Outcome#UNKNOWN}.
      */
     public EventResult sendEvent(ProxySession session, String jobName, JobAction action, boolean readStatusAfter) {
+        return sendEvent(session, jobName, action, null, null, readStatusAfter);
+    }
+
+    /**
+     * As {@link #sendEvent(ProxySession, String, JobAction, boolean)}; an action sent through "Send Event"
+     * ({@link JobAction#dialogEvent()}) is chosen in the Send Event dialog instead, with {@code status}
+     * (for Change Status) and {@code comment} in its fields, and sent with its OK button.
+     */
+    public EventResult sendEvent(ProxySession session, String jobName, JobAction action, @Nullable String status,
+            @Nullable String comment, boolean readStatusAfter) {
         session.lock().lock();
         try {
             State state = state(session);
@@ -216,7 +226,9 @@ public class QuickViewClient {
             requirePartial(state, go, "pressing Go for " + what);
             remember(state, go.body());
 
-            URI dialog = dialogUri(state, go.body());
+            String dialogPath = action.dialogEvent() != null ? quickview.sendEvent().path()
+                    : quickview.confirmationPath();
+            URI dialog = dialogUri(state, go.body(), dialogPath);
             if (dialog == null) {
                 String messages = join(messages(chosen.body()), messages(go.body()));
                 if (messages != null) {
@@ -224,9 +236,13 @@ public class QuickViewClient {
                     return new EventResult(job, Outcome.REJECTED, choice.label(), null, messages, null);
                 }
                 log.warn("[backend] Quick View did not open {} after Go ({} for '{}'): {}",
-                        quickview.confirmationPath(), what, session.username(), snippet(MASK.text(go.body())));
+                        dialogPath, what, session.username(), snippet(MASK.text(go.body())));
                 throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-unexpected-response",
-                        "Quick View did not ask to confirm " + what + "; the event was not sent");
+                        "Quick View did not open its dialog for " + what + "; the event was not sent");
+            }
+            if (action.dialogEvent() != null) {
+                return sendInDialog(session, state, found, job, choice, action, status, comment, dialog,
+                        readStatusAfter);
             }
             Landing opened = get(state, dialog, state.pageUrl);
             String dialogBody = opened.exchange().body();
@@ -259,21 +275,195 @@ public class QuickViewClient {
             if (!closed) {
                 state.reset();
             }
-            String statusAfter = null;
-            if (readStatusAfter) {
-                try {
-                    String after = search(session, state, job);
-                    statusAfter = JobPage.parse(after).row(job).map(JobPage.JobRow::status).orElse(null);
-                    message = join(message.isEmpty() ? null : message, messages(after));
-                } catch (BackendException e) {
-                    log.info("[backend] status of {} after {} not read: {}", job, choice.label(), e.getMessage());
-                }
-            }
-            return new EventResult(job, closed ? Outcome.ACCEPTED : Outcome.UNKNOWN, choice.label(), question,
-                    message == null || message.isEmpty() ? null : cut(message, 1000), statusAfter);
+            return finish(session, state, job, choice.label(), closed, question, message, readStatusAfter);
         } finally {
             session.lock().unlock();
         }
+    }
+
+    /** The result once the event was sent, with the job's status searched again when asked for. */
+    private EventResult finish(ProxySession session, State state, String job, String event, boolean closed,
+            @Nullable String question, @Nullable String message, boolean readStatusAfter) {
+        String statusAfter = null;
+        if (readStatusAfter) {
+            try {
+                String after = search(session, state, job);
+                statusAfter = JobPage.parse(after).row(job).map(JobPage.JobRow::status).orElse(null);
+                message = join(message == null || message.isEmpty() ? null : message, messages(after));
+            } catch (BackendException e) {
+                log.info("[backend] status of {} after {} not read: {}", job, event, e.getMessage());
+            }
+        }
+        return new EventResult(job, closed ? Outcome.ACCEPTED : Outcome.UNKNOWN, event, question,
+                message == null || message.isEmpty() ? null : cut(message, 1000), statusAfter);
+    }
+
+    /**
+     * The Send Event dialog, as the user fills it: the event (e.g. Change Status) in its dropdown, which
+     * adds that event's fields (the status dropdown) with a partial-page event; the status and comment;
+     * OK. Then the postback to the page that the browser sends once the dialog has closed, whose page
+     * messages say what AutoSys did. Nothing is sent before OK.
+     */
+    private EventResult sendInDialog(ProxySession session, State state, String found, String job,
+            EventChoice choice, JobAction action, @Nullable String status, @Nullable String comment, URI dialog,
+            boolean readStatusAfter) {
+        AutosysProperties.SendEvent dialogConfig = quickview.sendEvent();
+        String event = action.dialogEvent();
+        String what = event + (status == null ? "" : " to " + status) + " of job " + job;
+
+        Landing opened = get(state, dialog, state.pageUrl);
+        String body = opened.exchange().body();
+        HtmlForms.Form form = opened.exchange().status() == 200 ? HtmlForms.find(body, dialogConfig.form()) : null;
+        if (form == null) {
+            log.warn("[backend] the Send Event dialog for {} did not open for '{}': GET {} -> {}, body: {}", what,
+                    session.username(), opened.uri().getPath(), opened.exchange().status(), snippet(MASK.text(body)));
+            throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-unexpected-response",
+                    "The Send Event dialog for " + what + " did not open (" + opened.uri().getPath()
+                            + " answered status " + opened.exchange().status() + "); the event was not sent");
+        }
+        URI target = form.action().isEmpty() ? opened.uri()
+                : withParams(opened.uri().resolve(form.action()), opened.uri().toString());
+
+        Map<String, String> events = HtmlForms.selects(body).getOrDefault(dialogConfig.eventSelect(), Map.of());
+        String eventValue = option(events, event, dialogConfig.eventIds().get(action.name()));
+        if (eventValue == null) {
+            return new EventResult(job, Outcome.REJECTED, choice.label(), null, "The Send Event dialog offers no "
+                    + event + " for job " + job + " (it offers " + String.join(", ", events.values()) + ")", null);
+        }
+
+        // the dialog's page posts its URL's parameters as fields too
+        Map<String, String> fields = new LinkedHashMap<>(queryParams(target.toString()));
+        fields.putAll(form.fields());
+        EVENT_PARAMS.forEach(fields::remove);
+        fields.put(TRINIDAD_FORM, dialogConfig.form());
+        fields.put(dialogConfig.eventSelect(), eventValue);
+        fields.put("event", quickview.eventEvent());
+        fields.put("source", dialogConfig.eventSelect());
+        fields.put("partial", "true");
+        Exchange chosen = postDialog(state, target, opened.uri(), fields, true);
+        requirePartial(state, chosen, "choosing " + event + " in the Send Event dialog");
+        String chosenBody = chosen.body();
+        String rejected = messages(chosenBody);
+        if (rejected != null && !chosenBody.contains(dialogConfig.statusSelect())) {
+            return new EventResult(job, Outcome.REJECTED, choice.label(), null, rejected, null);
+        }
+        // the fields the event added (the status dropdown) and the dialog's new ViewState
+        HtmlForms.inputs(chosenBody).forEach((name, value) -> {
+            if (!name.equals(TRINIDAD_FORM) && !EVENT_PARAMS.contains(name)) {
+                fields.put(name, value);
+            }
+        });
+        String viewState = postscriptViewState(chosenBody, dialogConfig.form());
+        if (viewState != null) {
+            fields.put(VIEW_STATE, viewState);
+        }
+
+        if (action.needsStatus()) {
+            Map<String, String> statuses = HtmlForms.selects(chosenBody).getOrDefault(dialogConfig.statusSelect(),
+                    Map.of());
+            if (statuses.isEmpty()) {
+                log.warn("[backend] the Send Event dialog shows no {} dropdown after choosing {} ('{}'): {}",
+                        dialogConfig.statusSelect(), event, session.username(), snippet(MASK.text(chosenBody)));
+                throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-unexpected-response", "The Send Event "
+                        + "dialog showed no statuses for " + event + "; the event was not sent");
+            }
+            String statusValue = status == null ? null : option(statuses, status, null);
+            if (statusValue == null) {
+                return new EventResult(job, Outcome.REJECTED, choice.label(), null, "The Send Event dialog offers "
+                        + "no status " + status + " (it offers " + String.join(", ", statuses.values()) + ")", null);
+            }
+            fields.put(dialogConfig.statusSelect(), statusValue);
+        }
+        String commentField = HtmlForms.labelledField(body, dialogConfig.commentLabel());
+        if (comment != null && commentField != null && fields.containsKey(commentField)) {
+            fields.put(commentField, comment);
+        }
+        String ok = HtmlForms.buttonSource(body + chosenBody, dialogConfig.form(), dialogConfig.okButton());
+        if (ok == null) {
+            throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-unexpected-response", "The Send Event "
+                    + "dialog has no " + dialogConfig.okButton() + " button; the event was not sent");
+        }
+        fields.remove("partial");
+        fields.put("event", "");
+        fields.put("source", ok);
+        String question = "Send Event: " + event + (status == null ? "" : ", status " + status) + ", job " + job;
+
+        // from here on the event may have been executed: no retry, an unclear answer is UNKNOWN
+        Exchange answer;
+        try {
+            answer = postDialog(state, target, opened.uri(), fields, false);
+        } catch (BackendException e) {
+            state.reset();
+            return new EventResult(job, Outcome.UNKNOWN, choice.label(), question,
+                    "No answer from AutoSys after OK: " + e.getMessage(), null);
+        }
+        boolean closed = answer.status() == 200 && !answer.body().contains("<form")
+                && !answer.body().contains("ViewExpired");
+        log.info("[backend] '{}' sent {}: {} {}, {} bytes, answer: {}", session.username(), what, answer.status(),
+                answer.contentType(), answer.body().length(), snippet(MASK.text(answer.body())));
+        String message = HtmlForms.text(answer.body());
+        if (closed) {
+            message = join(message.isEmpty() ? null : message, returnFromDialog(session, state, found, job, choice));
+        } else {
+            state.reset();
+        }
+        return finish(session, state, job, choice.label() + ": " + event + (status == null ? "" : " " + status),
+                closed, question, message, readStatusAfter);
+    }
+
+    /**
+     * The postback the page sends when its dialog has closed ({@code rtrn=<Go button>}); returns its page
+     * messages. A failure is only logged: the event was sent already.
+     */
+    private @Nullable String returnFromDialog(ProxySession session, State state, String found, String job,
+            EventChoice choice) {
+        try {
+            Map<String, String> fields = pageFields(state, found);
+            fields.put(quickview.searchField(), job);
+            fields.put(choice.select(), choice.value());
+            fields.putIfAbsent(choice.button(), "");
+            fields.put("source", "");
+            fields.put("partialTargets", "");
+            fields.put("partial", "true");
+            fields.put(quickview.sendEvent().returnParam(), choice.button());
+            Exchange back = postPartial(state, fields);
+            if (partialResponseProblem(back) != null) {
+                log.info("[backend] the page did not take the return from the dialog for '{}': {}",
+                        session.username(), partialResponseProblem(back));
+                state.reset();
+                return null;
+            }
+            remember(state, back.body());
+            return messages(back.body());
+        } catch (BackendException e) {
+            log.info("[backend] no return from the dialog for '{}': {}", session.username(), e.getMessage());
+            return null;
+        }
+    }
+
+    /** The value of the option labelled {@code wanted}, else {@code configured} when no labels are listed; null if not offered. */
+    private static @Nullable String option(Map<String, String> options, String wanted, @Nullable String configured) {
+        if (options.isEmpty()) {
+            return configured;
+        }
+        return options.entrySet().stream().filter(e -> JobAction.same(e.getValue(), wanted)).map(Map.Entry::getKey)
+                .findFirst().orElse(null);
+    }
+
+    /** A POST to a dialog's form: partial-page (Tr-XHR) or the full submit of its button. */
+    private Exchange postDialog(State state, URI target, URI dialog, Map<String, String> fields, boolean partial) {
+        HttpPost post = new HttpPost(target);
+        if (partial) {
+            post.setHeader("Tr-XHR-Message", "true");
+            post.setHeader("Accept", "*/*");
+        } else {
+            post.setHeader("Accept", "text/html,application/xhtml+xml,*/*;q=0.8");
+        }
+        post.setHeader("Origin", origin(state));
+        post.setHeader("Referer", dialog.toString());
+        post.setEntity(new StringEntity(formBody(fields),
+                ContentType.APPLICATION_FORM_URLENCODED.withCharset(StandardCharsets.UTF_8)));
+        return send(state, post);
     }
 
     /**
@@ -384,11 +574,10 @@ public class QuickViewClient {
      * The confirmation dialog that the response to Go opens (its URL is in a script), with the page's
      * tokens added that the browser's scripts add; null when the response opens none.
      */
-    private @Nullable URI dialogUri(State state, String goResponse) {
+    private @Nullable URI dialogUri(State state, String goResponse, String path) {
         String text = goResponse.replace("<![CDATA[", "").replace("]]>", "").replace("\\/", "/")
                 .replaceAll("(?i)\\\\(?:x26|u0026)", "&").replaceAll("(?i)\\\\(?:x3d|u003d)", "=")
                 .replace("&amp;", "&");
-        String path = quickview.confirmationPath();
         String file = path.substring(path.lastIndexOf('/') + 1);
         Matcher m = Pattern.compile("[^\"'\\s<>()]*" + Pattern.quote(file) + "[^\"'\\s<>()]*").matcher(text);
         if (!m.find()) {
@@ -789,7 +978,7 @@ public class QuickViewClient {
             return;
         }
         HtmlForms.Form updated = HtmlForms.find(body, quickview.form());
-        String viewState = updated != null ? updated.fields().get(VIEW_STATE) : postscriptViewState(body);
+        String viewState = updated != null ? updated.fields().get(VIEW_STATE) : postscriptViewState(body, quickview.form());
         if (updated == null && viewState == null) {
             return;
         }
@@ -802,9 +991,9 @@ public class QuickViewClient {
     }
 
     /** The ViewState in the form's {@code tr_<form>_Postscript} fragment, sent when only parts of the page change. */
-    private @Nullable String postscriptViewState(String body) {
+    private @Nullable String postscriptViewState(String body, String form) {
         Matcher m = FRAGMENT.matcher(body);
-        String id = "id=\"tr_" + quickview.form() + "_Postscript\"";
+        String id = "id=\"tr_" + form + "_Postscript\"";
         while (m.find()) {
             if (m.group(1).contains(id)) {
                 return HtmlForms.inputs(m.group(1)).get(VIEW_STATE);

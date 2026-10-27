@@ -511,8 +511,8 @@ class QuickViewApiTest {
         assertThat(problem.at("/type").asString()).isEqualTo("/problems/autosys-action-rejected");
         assertThat(problem.at("/outcome").asString()).isEqualTo("REJECTED");
         assertThat(problem.at("/autosysMessage").asString())
-                .isEqualTo("Quick View offers no Kill for job TEST_FX_LOADER (it offers Send Event, Force Start Job, "
-                        + "On Hold, Off Hold)");
+                .isEqualTo("Quick View offers no Kill for job TEST_FX_LOADER (it offers Start Job, Force Start Job, "
+                        + "On Hold, Off Hold, Send Event)");
         autosys.verify(0, postRequestedFor(urlEqualTo(SEARCH)).withRequestBody(containing("eventId")));
 
         // without the dropdown's options the configured value is sent; AutoSys answers Go with an error
@@ -531,6 +531,102 @@ class QuickViewApiTest {
 
         assertThat(action("TEST_FX_LOADER", token, "{\"action\":\"DELETE_JOB\"}", null).statusCode()).isEqualTo(400);
         assertThat(action("NOPE", token, "{\"action\":\"FORCE_STARTJOB\"}", null).statusCode()).isEqualTo(404);
+    }
+
+    static final String SEND_DIALOG = "/wcc/quickview/pages/dialog/autosysSendEvent.jsf";
+
+    /** Send Event: Go opens the Send Event dialog; choosing an event adds its status dropdown; OK; the return. */
+    static void stubSendEvent() throws IOException {
+        stubEvents("send-event-go.xml", 200);
+        autosys.stubFor(get(urlPathEqualTo(SEND_DIALOG))
+                .withQueryParam("_afPfm", equalTo("pf-2"))
+                .withHeader("Cookie", containing("JSESSIONID=js-1"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/html;charset=UTF-8")
+                        .withBody(resource("send-event-dialog.html"))));
+        autosys.stubFor(post(urlPathEqualTo(SEND_DIALOG))
+                .withHeader("Tr-XHR-Message", equalTo("true"))
+                .withRequestBody(containing("source=eventId&partial=true"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/xml;charset=utf-8")
+                        .withBody(resource("send-event-chosen.xml"))));
+        autosys.stubFor(post(urlPathEqualTo(SEND_DIALOG))
+                .withRequestBody(containing("source=j_id76"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/html;charset=UTF-8")
+                        .withBody(resource("dialog-closed.html"))));
+        autosys.stubFor(post(urlEqualTo(SEARCH)).atPriority(1)
+                .withRequestBody(containing("rtrn=jobResultTable%3AsendEventButton"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/xml;charset=utf-8")
+                        .withBody(resource("send-event-return.xml"))));
+    }
+
+    @Test
+    void changeStatusSendsTheEventThroughTheSendEventDialog(CapturedOutput output) throws Exception {
+        stubSendEvent();
+        String token = login();
+
+        HttpResponse<String> response = action("TEST_FX_LOADER", token,
+                "{\"action\":\"CHANGE_STATUS\",\"status\":\"inactive\",\"comment\":\"reset for rerun\"}", "key-cs");
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+        JsonNode result = JsonMapper.shared().readTree(response.body());
+        assertThat(result.at("/action").asString()).isEqualTo("CHANGE_STATUS");
+        assertThat(result.at("/status").asString()).isEqualTo("INACTIVE");
+        assertThat(result.at("/outcome").asString()).isEqualTo("ACCEPTED");
+        assertThat(result.at("/event").asString()).isEqualTo("Send Event: Change Status INACTIVE");
+        assertThat(result.at("/autosysMessage").asString()).contains("Event CHANGE_STATUS was sent for TEST_FX_LOADER.");
+
+        // "Send Event" in the results' dropdown, then Go
+        autosys.verify(1, postRequestedFor(urlEqualTo(SEARCH))
+                .withRequestBody(containing("jobResultTable%3AeventId=10&"))
+                .withRequestBody(containing("source=jobResultTable%3AeventId&")));
+        autosys.verify(1, postRequestedFor(urlEqualTo(SEARCH))
+                .withRequestBody(containing("jobResultTable%3AeventId=10&"))
+                .withRequestBody(containing("source=jobResultTable%3AsendEventButton&")));
+        // Change Status in the dialog's dropdown (a partial-page event on the dialog's ViewState)
+        autosys.verify(1, postRequestedFor(urlPathEqualTo(SEND_DIALOG))
+                .withQueryParam("OWASP-CSRFTOKEN", equalTo("C-1"))
+                .withRequestBody(containing("eventId=11&"))
+                .withRequestBody(containing("javax.faces.ViewState=%21SVS-1"))
+                .withRequestBody(containing("event=autosub&source=eventId&partial=true")));
+        // OK with the status, the comment and the ViewState of the partial response; no disabled fields
+        autosys.verify(1, postRequestedFor(urlPathEqualTo(SEND_DIALOG))
+                .withHeader("Referer", containing(SEND_DIALOG + "?_afPfm=pf-2"))
+                .withRequestBody(containing("eventId=11&"))
+                .withRequestBody(containing("statusId=4"))
+                .withRequestBody(containing("j_id23=reset+for+rerun&"))
+                .withRequestBody(containing("sendPriority=10&"))
+                .withRequestBody(containing("javax.faces.ViewState=%21SVS-2"))
+                .withRequestBody(containing("event=&source=j_id76"))
+                .withRequestBody(com.github.tomakehurst.wiremock.client.WireMock.notContaining("j_id59"))
+                .withRequestBody(com.github.tomakehurst.wiremock.client.WireMock.notContaining("partial=")));
+        // back on the page, as the browser returns from the dialog
+        autosys.verify(1, postRequestedFor(urlEqualTo(SEARCH))
+                .withRequestBody(containing("source=&partialTargets=&partial=true&rtrn=jobResultTable%3AsendEventButton")));
+
+        // replayed for the same key, refused for the same key with another status
+        assertThat(action("TEST_FX_LOADER", token, "{\"action\":\"CHANGE_STATUS\",\"status\":\"INACTIVE\"}", "key-cs")
+                .body()).isEqualTo(response.body());
+        assertThat(action("TEST_FX_LOADER", token, "{\"action\":\"CHANGE_STATUS\",\"status\":\"SUCCESS\"}", "key-cs")
+                .statusCode()).isEqualTo(422);
+        autosys.verify(1, postRequestedFor(urlPathEqualTo(SEND_DIALOG)).withRequestBody(containing("source=j_id76")));
+        assertThat(output.getAll()).containsPattern("\"event\":\"JOB_ACTION\",.*\"action\":\"CHANGE_STATUS INACTIVE\","
+                + "\"outcome\":\"ACCEPTED\"");
+    }
+
+    @Test
+    void changeStatusNeedsAStatusTheDialogOffers() throws Exception {
+        stubSendEvent();
+        String token = login();
+
+        assertThat(action("TEST_FX_LOADER", token, "{\"action\":\"CHANGE_STATUS\"}", null).statusCode()).isEqualTo(400);
+        assertThat(action("TEST_FX_LOADER", token, "{\"action\":\"FORCE_STARTJOB\",\"status\":\"SUCCESS\"}", null)
+                .statusCode()).isEqualTo(400);
+
+        HttpResponse<String> unknown = action("TEST_FX_LOADER", token,
+                "{\"action\":\"CHANGE_STATUS\",\"status\":\"ON_ICE\"}", null);
+        assertThat(unknown.statusCode()).as(unknown.body()).isEqualTo(409);
+        assertThat(JsonMapper.shared().readTree(unknown.body()).at("/autosysMessage").asString())
+                .isEqualTo("The Send Event dialog offers no status ON_ICE (it offers Running, Starting, Success, "
+                        + "Failure, Inactive, Terminated)");
+        autosys.verify(0, postRequestedFor(urlPathEqualTo(SEND_DIALOG)).withRequestBody(containing("source=j_id76")));
     }
 
     private HttpResponse<String> action(String job, String token, String body, @org.jspecify.annotations.Nullable String key)

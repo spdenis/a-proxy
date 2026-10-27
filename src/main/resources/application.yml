@@ -82,11 +82,22 @@ autosys:
       event-button: jobResultTable:sendEventButton
       event-ids:                    # dropdown values, when the page does not list the options' labels
         FORCE_STARTJOB: "1"
+        CHANGE_STATUS: "10"         # "Send Event": opens the Send Event dialog
       confirmation-path: /wcc/quickview/pages/dialog/confirmationDialog.jsf
       confirmation-form: confirmationDialog
       confirm-button: sendEvtYes
       dialog-params: [AntiXSRFToken, OWASP-CSRFTOKEN, conversationContext]  # from the page URL if missing
       messages-id: pageMessages
+      send-event:                   # the Send Event dialog: event type, its fields (status), OK
+        path: /wcc/quickview/pages/dialog/autosysSendEvent.jsf
+        form: sendeventDialog
+        event-select: eventId
+        status-select: statusId
+        ok-button: OK               # the button's text; its id is generated
+        comment-label: Comment
+        return-param: rtrn
+        event-ids:
+          CHANGE_STATUS: "11"
 
   # POST /api/v1/jobs/{name}/actions (only in allowed-environments: the proxy refuses to start elsewhere)
   actions:

@@ -206,10 +206,35 @@ public record AutosysProperties(
             /* Page parameters a dialog URL needs; taken from the Quick View page URL when the dialog's lacks them. */
             @DefaultValue({"AntiXSRFToken", "OWASP-CSRFTOKEN", "conversationContext"}) List<String> dialogParams,
             /* id of the element with the page's (error) messages. */
-            @DefaultValue("pageMessages") String messagesId) {
+            @DefaultValue("pageMessages") String messagesId,
+            @Valid @DefaultValue SendEvent sendEvent) {
 
         public Quickview {
             loginPage = blankToNull(loginPage);
+            eventIds = eventIds == null ? Map.of() : Map.copyOf(eventIds);
+        }
+    }
+
+    /**
+     * The Send Event dialog that Go opens for "Send Event" (e.g. Change Status): its event dropdown (a
+     * partial-page event adds the event's fields, such as the status dropdown), OK, and the postback to
+     * the page that the browser sends when the dialog has closed.
+     */
+    public record SendEvent(
+            @DefaultValue("/wcc/quickview/pages/dialog/autosysSendEvent.jsf") String path,
+            @DefaultValue("sendeventDialog") String form,
+            @DefaultValue("eventId") String eventSelect,
+            @DefaultValue("statusId") String statusSelect,
+            /* Text of the button that sends the event (its id is generated). */
+            @DefaultValue("OK") String okButton,
+            /* Label of the dialog's comment field; the API request's comment goes there. */
+            @DefaultValue("Comment") String commentLabel,
+            /* Parameter of the postback after the dialog closed; its value is the Go button. */
+            @DefaultValue("rtrn") String returnParam,
+            /* Dropdown value of each dialog event (CHANGE_STATUS: "11"), used when the dialog lists no labels. */
+            @Nullable Map<String, String> eventIds) {
+
+        public SendEvent {
             eventIds = eventIds == null ? Map.of() : Map.copyOf(eventIds);
         }
     }

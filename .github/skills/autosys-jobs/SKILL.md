@@ -7,7 +7,8 @@ description: Look up AutoSys jobs through the local AutoSys proxy API - job stat
 
 The AutoSys proxy (running locally, default `http://localhost:8080`) answers a REST API by driving WCC
 Quick View with the user's own AutoSys session. Use it for every question about AutoSys jobs; never guess job
-data. Everything is read-only except `force-start` (see [Force start](#force-start)).
+data. Everything is read-only except `force-start` and `change-status` (see [Force start](#force-start) and
+[Change status](#change-status)).
 
 ## Setup
 
@@ -45,6 +46,7 @@ problem (printed as JSON), 2 = setup problem (message on stderr).
 | everything inside a box including nested boxes, "which jobs in BOX failed" | `tree BOX [-Depth N]` |
 | who am I / token expiry | `session` |
 | "force start JOB" (only on an explicit request, after confirming; see below) | `force-start JOB -Comment "<reason>"` |
+| "set JOB to INACTIVE", "mark JOB as SUCCESS", "change the status of JOB" (only on an explicit request, after confirming) | `change-status JOB -Status <STATUS> -Comment "<reason>"` |
 
 Traversals make one API call per job (each takes a moment, because AutoSys Quick View is behind it). The
 defaults are `-Depth 5` and `-MaxJobs 100`. Start with the defaults; if the result says `"truncated": true`,
@@ -58,7 +60,8 @@ curl.exe -s -H "Authorization: Bearer %AUTOSYS_PROXY_TOKEN%" http://localhost:80
 
 Endpoints: `GET /api/v1/jobs/{name}`, `/{name}/status`, `/{name}/dependencies`, `/{name}/runs`,
 `/{name}/jobs`, `GET /api/v1/jobs?name=<pattern>`, `GET /api/v1/session`;
-`POST /api/v1/jobs/{name}/actions` with `{"action":"FORCE_STARTJOB","comment":"..."}`.
+`POST /api/v1/jobs/{name}/actions` with `{"action":"FORCE_STARTJOB","comment":"..."}` or
+`{"action":"CHANGE_STATUS","status":"INACTIVE","comment":"..."}`.
 
 ## What the results mean
 
@@ -113,6 +116,20 @@ Endpoints: `GET /api/v1/jobs/{name}`, `/{name}/status`, `/{name}/dependencies`, 
 - Other errors (`autosys-session`, `autosys-unexpected-response`, ...) say "the event was not sent" in `detail`:
   nothing happened, and it is safe to try once more if the user wants.
 
+## Change status
+
+`change-status` sets a job's status without running it (AutoSys "Send Event" → "Change Status"). `-Status` is one of
+`RUNNING`, `STARTING`, `SUCCESS`, `FAILURE`, `INACTIVE`, `TERMINATED`. It is riskier than force start: `SUCCESS` (or
+`FAILURE`, `TERMINATED`) releases the jobs that depend on it as if the job had really ended that way.
+
+- The same rules as [Force start](#force-start): only on an explicit request, never as a step of answering another
+  question, never in a loop; show `status JOB` first and confirm the exact job **and status** ("Change TEST_JOB from
+  FAILURE to INACTIVE now?"); run it once; never retry `UNKNOWN`.
+- Before setting `SUCCESS`, `FAILURE` or `TERMINATED`, also show what depends on the job (`deps JOB`, its
+  `dependents`) and say that they may start.
+- The result has `status`, `event` and `autosysMessage` (what AutoSys said afterwards); report `statusAfter`.
+  `REJECTED` with "offers no status ..." means that status is not available for that job.
+
 ## Errors
 
 The API returns `application/problem+json` with `type` and `detail`:
@@ -124,6 +141,7 @@ The API returns `application/problem+json` with `type` and `detail`:
 | 404 `job-not-found` | No such job (`detail` may say the search matched other jobs: offer `search`). |
 | 409 `not-a-box` | `jobs` / `tree` on a regular job: answer with `job` instead. |
 | 409 `autosys-action-rejected`, 502 `autosys-action-unknown` | See [Force start](#force-start). |
+| 400 `invalid-status` | `change-status` without a valid `-Status`. |
 | 429 `rate-limited` | Too many actions in a minute: wait, do not loop. |
 | 403 `actions-disabled` | Actions are switched off on this proxy. |
 | 409 `autosys-login-rejected` | AutoSys rejected the stored password (e.g. it was changed): tell the user to log in to AutoSys through the proxy again and set the new token. Do not retry. |
@@ -134,6 +152,6 @@ If the proxy is not reachable at all, tell the user to start it (`./gradlew boot
 
 ## Limits
 
-- The only change the API makes is force start. It cannot start, kill, hold or ice jobs or change
-  definitions: if asked to, say so and suggest doing it in the AutoSys UI.
+- The only changes the API makes are force start and change status. It cannot start, kill, hold or ice jobs or
+  change definitions: if asked to, say so and suggest doing it in the AutoSys UI.
 - Only jobs the user's AutoSys account can see in Quick View are returned.
