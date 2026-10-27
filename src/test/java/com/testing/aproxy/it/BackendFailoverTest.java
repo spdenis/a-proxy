@@ -87,6 +87,18 @@ class BackendFailoverTest {
                 .withHeader("Host", containing("127.0.0.1")));
     }
 
+    @Test
+    void theBrowsersSessionIsUsedFirstWhateverTheUrlList(CapturedOutput output) throws Exception {
+        QuickViewApiTest.stubAutosys(autosys, "asid-1");
+        String token = login();
+
+        assertThat(status(token).statusCode()).isEqualTo(200);
+        // only the browser's login: the proxy did not log in itself on any of the URLs
+        autosys.verify(1, postRequestedFor(urlEqualTo("/authentication/login")));
+        assertThat(output.getAll()).contains("Quick View opened for 'carol' with the browser's AutoSys session")
+                .doesNotContain("unreachable for 'carol'");
+    }
+
     private HttpResponse<String> status(String token) throws Exception {
         return browser.get("/api/v1/jobs/TEST_FX_LOADER/status", "Authorization", "Bearer " + token);
     }

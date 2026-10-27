@@ -104,8 +104,9 @@ public class QuickViewClient {
         HtmlForms.@Nullable Form form;
         @Nullable String pageUrl;
         @Nullable String userAgent;
-        /* AutoSys URL of this session, from the configured ones; the next one after AutoSys dropped it */
+        /* AutoSys URL in use: the browser's while its session is borrowed, else the own login's (bases[baseIndex]) */
         URI base;
+        /* the own logins' URL, the next one after AutoSys dropped the proxy's own session */
         int baseIndex;
         /* the session is the browser's (borrowed cookies or page), not the proxy's own login */
         boolean borrowed;
@@ -539,18 +540,13 @@ public class QuickViewClient {
         return state.base.toString();
     }
 
-    /** Whether the session's AutoSys URL is the browser's, so the browser's cookies and pages are valid there. */
-    private boolean onBrowserBase(State state) {
-        return state.base.getRawAuthority().equalsIgnoreCase(browserBase.getRawAuthority());
-    }
-
     /**
      * Takes over the Quick View page the browser has open: its URL tokens, form fields, ViewState
      * and cookies (with its Quick View JSESSIONID), as sent on its latest search.
      */
     private boolean useBrowserPage(ProxySession session, State state) {
         BrowserPage page = session.quickViewPage();
-        if (!quickview.reuseBrowserPage() || !onBrowserBase(state)) {
+        if (!quickview.reuseBrowserPage()) {
             return false;
         }
         if (page == null || page == state.failedPage) {
@@ -570,6 +566,8 @@ public class QuickViewClient {
             }
         }
         cookies.forEach(state.cookies::putBrowser);
+        // the browser's page and cookies are valid only on the browser's AutoSys
+        state.base = browserBase;
         state.form = new HtmlForms.Form(page.action(), page.fields());
         state.pageUrl = state.base.resolve(page.pageUrl() != null ? page.pageUrl() : page.action()).toString();
         state.loggedIn = true;
@@ -587,7 +585,8 @@ public class QuickViewClient {
     private void open(ProxySession session, State state) {
         boolean borrowed = false;
         // tried on every opening: the browser's cookies change as the user moves around the UI
-        if (!state.loggedIn && quickview.reuseBrowserSession() && onBrowserBase(state)) {
+        if (!state.loggedIn && quickview.reuseBrowserSession()) {
+            state.base = browserBase;
             state.cookies.store(login.path(), session.autosysCookies());
             session.browserCookies().forEach((name, values) -> {
                 if (quickview.excludeBrowserCookies().stream().noneMatch(name::equalsIgnoreCase)) {
@@ -648,6 +647,7 @@ public class QuickViewClient {
 
     /** The proxy's own login on the session's URL; on the next ones in turn while AutoSys is unreachable. */
     private void loginOnAnyBase(ProxySession session, State state) {
+        state.base = bases.get(state.baseIndex);
         for (int tried = 1; ; tried++) {
             try {
                 login(session, state);

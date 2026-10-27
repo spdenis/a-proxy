@@ -190,8 +190,9 @@ there until AutoSys drops its session; it then logs in on the next one, and afte
 URL that does not answer (connection error or timeout) is skipped at login. Each move is logged at INFO
 (`logging in again on <url>`, `AutoSys at <url> unreachable`), and the AUDIT `BACKEND_LOGIN` line names the URL.
 
-The browser always goes to `autosys.base-url`: its AutoSys cookies and Quick View page are valid only there, so steps 1
-and 2 above are used only while a session is on that URL; on the others the proxy uses its own login (step 3).
+The browser always goes to `autosys.base-url`, and steps 1 and 2 above (the browser's own AutoSys session) are always
+tried first, on that URL, whatever the list says. The list is only for the proxy's own login (step 3), used when the
+browser's session does not work.
 
 | Problem type | Status | Meaning |
 |---|---|---|
