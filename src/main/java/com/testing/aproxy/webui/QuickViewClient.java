@@ -566,7 +566,19 @@ public class QuickViewClient {
             }
         }
         fields.put("event", quickview.eventEvent());
+        if (log.isDebugEnabled()) {
+            log.debug("[backend] {} for {}: fields {}", choosing ? "choosing the event" : "pressing Go", job,
+                    loggable(fields));
+        }
         return postPartial(state, fields);
+    }
+
+    /** Form fields for a debug log: secrets masked, the ViewState shortened. */
+    private static Map<String, String> loggable(Map<String, String> fields) {
+        Map<String, String> shown = new LinkedHashMap<>();
+        fields.forEach((name, value) -> shown.put(name, MASK.isSecretName(name) ? "***"
+                : name.equals(VIEW_STATE) && value.length() > 12 ? value.substring(0, 12) + "..." : value));
+        return shown;
     }
 
     /**
