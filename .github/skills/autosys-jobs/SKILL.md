@@ -158,7 +158,7 @@ The API returns `application/problem+json` with `type` and `detail`:
 | 403 `actions-disabled` | Actions are switched off on this proxy. |
 | 409 `autosys-login-rejected` | AutoSys rejected the stored password (e.g. it was changed): tell the user to log in to AutoSys through the proxy again and set the new token. Do not retry. |
 | 502 `autosys-quickview` | The proxy could not open Quick View: open Quick View in the browser through the proxy (`http://localhost:8080`), then retry. |
-| 502 `autosys-session`, `autosys-unreachable`, `autosys-login` | AutoSys did not answer as expected: retry once; if it fails again, show the `detail` to the user. |
+| 502 `autosys-session`, `autosys-unreachable`, `autosys-unavailable`, `autosys-login` | AutoSys did not answer as expected: retry once; if it fails again, show the `detail` to the user. |
 
 If the proxy is not reachable at all, tell the user to start it (`./gradlew bootRun` in the proxy project).
 

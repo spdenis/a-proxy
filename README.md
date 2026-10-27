@@ -185,10 +185,19 @@ tried over and over would lock the account. Log in through the proxy again (a ne
 autosys.backend-urls=https://autosys-webui-1.example.internal:8443,https://autosys-webui-2.example.internal:8443
 ```
 
-The proxy's own logins use these URLs (default: `autosys.base-url` only). A session starts on the first one and stays
-there until AutoSys drops its session; it then logs in on the next one, and after the last one on the first again. A
-URL that does not answer (connection error or timeout) is skipped at login. Each move is logged at INFO
-(`logging in again on <url>`, `AutoSys at <url> unreachable`), and the AUDIT `BACKEND_LOGIN` line names the URL.
+The proxy's own logins use these URLs (default: `autosys.base-url` only), in turn. A session starts on the first one and
+stays there while it works. It moves on to the next URL, and after the last one to the first again, when:
+
+- AutoSys drops its session there;
+- the server does not answer (connection error or timeout);
+- the server answers the login with a server error (5xx, e.g. 503 while AutoSys or a load balancer is down); this is
+  not taken as a wrong password, so auto-login goes on;
+- Quick View does not open there after a successful login.
+
+One API call tries each URL at most once; if none works it fails with 502, and the next call starts on the URL after the
+last one tried. Each move is logged at INFO (`logging in again on <url>`, `AutoSys at <url> is not usable ... logging in
+on <url>`), and the AUDIT `BACKEND_LOGIN` line names the URL. Only a real login rejection (wrong password) stops the
+proxy's logins (`autosys-login-rejected`).
 
 The browser always goes to `autosys.base-url`, and steps 1 and 2 above (the browser's own AutoSys session) are always
 tried first, on that URL, whatever the list says. The list is only for the proxy's own login (step 3), used when the
@@ -201,6 +210,7 @@ browser's session does not work.
 | `/problems/autosys-login` | 502 | AutoSys rejected the proxy's own login (reason in `detail`; the AUDIT log has `BACKEND_LOGIN_FAILED`) |
 | `/problems/autosys-login-rejected` | 409 | AutoSys rejected the stored password earlier: the proxy does not try it again (so the account is not locked); log in through the proxy again |
 | `/problems/autosys-quickview` | 502 | Quick View did not open after login (check `entry-path`) |
+| `/problems/autosys-unreachable`, `/problems/autosys-unavailable` | 502 | No AutoSys URL answered, or each answered with a server error |
 | `/problems/autosys-session` | 502 | Quick View kept refusing the search after logging in again |
 | `/problems/autosys-unreachable` | 502 | connection error or timeout |
 | `/problems/login-not-recorded` | 409 | session created before this feature; log in through the proxy again |

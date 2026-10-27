@@ -64,6 +64,8 @@ public class QuickViewClient {
     private static final List<String> EVENT_PARAMS = List.of("source", "event", "partial", "partialTargets", "state",
             "value", "path");
     private static final String UNREACHABLE = "autosys-unreachable";
+    /* the server answered, but with a server error (e.g. 503 while AutoSys or its load balancer is down) */
+    private static final String UNAVAILABLE = "autosys-unavailable";
     private static final Redactor MASK = new Redactor(List.of());
 
     private final CloseableHttpClient http;
@@ -829,8 +831,8 @@ public class QuickViewClient {
     }
 
     /**
-     * Loads Quick View with the browser's AutoSys session, or after the proxy's own login;
-     * leaves {@code state.form} set.
+     * Loads Quick View with the browser's AutoSys session, or after the proxy's own login on the first
+     * configured AutoSys URL that works; leaves {@code state.form} set.
      */
     private void open(ProxySession session, State state) {
         boolean borrowed = false;
@@ -852,27 +854,43 @@ public class QuickViewClient {
                 state.borrowed = borrowed = true;
             }
         }
-        if (!state.loggedIn) {
-            loginOnAnyBase(session, state);
+        Landing page = null;
+        if (state.loggedIn) {
+            String failure;
+            try {
+                page = get(state, entryUri(session, state), state.base.resolve(quickview.entryReferer()).toString());
+                failure = quickViewForm(page) != null ? null : "ended at " + page.uri().getPath() + " with status "
+                        + page.exchange().status() + ", sent cookies " + state.cookies.names() + ", body: "
+                        + snippet(page.exchange().body());
+            } catch (BackendException e) {
+                if (!serverDown(e)) {
+                    throw e;
+                }
+                failure = e.getMessage();
+            }
+            if (failure != null) {
+                log.info("[backend] {} of '{}' did not open Quick View ({}); logging in as the proxy",
+                        borrowed ? "the browser's AutoSys session" : "the proxy's AutoSys session on " + state.base,
+                        session.username(), failure);
+                boolean own = !borrowed;
+                state.reset();
+                if (own) {
+                    nextBase(state);
+                }
+                borrowed = false;
+                page = null;
+            }
         }
-        Landing page = get(state, entryUri(session, state), state.base.resolve(quickview.entryReferer()).toString());
+        if (page == null) {
+            page = openOnAnyBase(session, state);
+        }
         HtmlForms.Form form = quickViewForm(page);
-        if (form == null && borrowed) {
-            log.info("[backend] the browser's AutoSys session of '{}' did not open Quick View (ended at {} with "
-                    + "status {}, sent cookies {}, body: {}); logging in as the proxy", session.username(),
-                    page.uri().getPath(), page.exchange().status(), state.cookies.names(),
-                    snippet(page.exchange().body()));
-            state.reset();
-            borrowed = false;
-            loginOnAnyBase(session, state);
-            page = get(state, entryUri(session, state), state.base.resolve(quickview.entryReferer()).toString());
-            form = quickViewForm(page);
-        }
         if (form == null) {
             log.warn("[backend] Quick View did not open for '{}': {} {} -> {} {}, sent cookies {}, body: {}",
                     session.username(), "GET", page.uri().getPath(), page.exchange().status(),
                     page.exchange().contentType(), state.cookies.names(), snippet(page.exchange().body()));
             state.reset();
+            nextBase(state);
             throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-quickview",
                     (quickview.reuseBrowserPage()
                             ? (session.quickViewPage() == null
@@ -895,21 +913,43 @@ public class QuickViewClient {
         return page.exchange().status() == 200 ? HtmlForms.find(page.exchange().body(), quickview.form()) : null;
     }
 
-    /** The proxy's own login on the session's URL; on the next ones in turn while AutoSys is unreachable. */
-    private void loginOnAnyBase(ProxySession session, State state) {
+    /** Whether a failure means that AutoSys server is not usable now (so another URL may be), not a refusal. */
+    private static boolean serverDown(BackendException e) {
+        return e.type().equals(UNREACHABLE) || e.type().equals(UNAVAILABLE);
+    }
+
+    /**
+     * The proxy's own login and its Quick View page, on the session's URL; while that server is down or
+     * does not open Quick View, on the next URLs in turn, each tried once. The last one's page is returned
+     * as it is, Quick View or not.
+     */
+    private Landing openOnAnyBase(ProxySession session, State state) {
         state.base = bases.get(state.baseIndex);
         for (int tried = 1; ; tried++) {
+            String failure;
             try {
                 login(session, state);
-                return;
+                Landing page = get(state, entryUri(session, state),
+                        state.base.resolve(quickview.entryReferer()).toString());
+                if (quickViewForm(page) != null || tried >= bases.size()) {
+                    return page;
+                }
+                failure = "Quick View did not open: " + page.uri().getPath() + " answered status "
+                        + page.exchange().status();
             } catch (BackendException e) {
-                if (!e.type().equals(UNREACHABLE) || tried >= bases.size()) {
+                if (!serverDown(e) || tried >= bases.size()) {
+                    if (serverDown(e)) {
+                        state.reset();
+                        nextBase(state); // the next request starts on the next URL
+                    }
                     throw e;
                 }
-                state.reset();
-                log.info("[backend] AutoSys at {} unreachable for '{}' ({}); logging in on {}", state.base,
-                        session.username(), e.getMessage(), nextBase(state));
+                failure = e.getMessage();
             }
+            URI failed = state.base;
+            state.reset();
+            log.info("[backend] AutoSys at {} is not usable for '{}' ({}); logging in on {}", failed,
+                    session.username(), failure, nextBase(state));
         }
     }
 
@@ -941,6 +981,11 @@ public class QuickViewClient {
         String body = vault.withPassword(session.credentials(), template::body);
         post.setEntity(new StringEntity(body, ContentType.parse(template.contentType())));
         Exchange response = send(state, post);
+        if (response.status() >= 500) {
+            // the server is down, not the password wrong: no reason to stop logging in
+            throw new BackendException(HttpStatus.BAD_GATEWAY, UNAVAILABLE, "AutoSys at " + state.base
+                    + " answered the login with status " + response.status());
+        }
 
         LoginClassifier.Result result = classifier.classify(response.status(), response.location(),
                 response.setCookies(), response.body());

@@ -70,7 +70,7 @@ class BackendFailoverTest {
         String token = login();
 
         assertThat(status(token).statusCode()).isEqualTo(200);
-        assertThat(output.getAll()).contains("AutoSys at " + DOWN + " unreachable for 'carol'",
+        assertThat(output.getAll()).contains("AutoSys at " + DOWN + " is not usable for 'carol'",
                 "logged in to AutoSys at " + autosys.baseUrl() + " as 'carol'");
 
         // AutoSys drops the session once: the next login goes to the next URL, with the same token
@@ -96,7 +96,45 @@ class BackendFailoverTest {
         // only the browser's login: the proxy did not log in itself on any of the URLs
         autosys.verify(1, postRequestedFor(urlEqualTo("/authentication/login")));
         assertThat(output.getAll()).contains("Quick View opened for 'carol' with the browser's AutoSys session")
-                .doesNotContain("unreachable for 'carol'");
+                .doesNotContain("is not usable for 'carol'");
+    }
+
+    @Test
+    void aServerThatAnswersWithErrorsIsSkippedAndTheTurnGoesRoundToTheFirstUrls(CapturedOutput output)
+            throws Exception {
+        String token = login();
+        assertThat(status(token).statusCode()).isEqualTo(200);
+        String second = autosys.baseUrl();
+        String third = "http://127.0.0.1:" + autosys.getPort();
+
+        // the session on the second URL is dropped: on to the third
+        autosys.stubFor(post(urlEqualTo(QuickViewApiTest.SEARCH)).atPriority(1).inScenario("drop")
+                .whenScenarioStateIs(Scenario.STARTED).willSetStateTo("dropped")
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/html")
+                        .withBody("<html><form id=\"login\"></form></html>")));
+        assertThat(status(token).statusCode()).isEqualTo(200);
+        assertThat(output.getAll()).contains("logged in to AutoSys at " + third + " as 'carol'");
+
+        // the third drops it too, while the second is up but answers logins with 503: round to the first
+        // (unreachable), the second (503), the third again
+        autosys.stubFor(post(urlEqualTo(QuickViewApiTest.SEARCH)).atPriority(1).inScenario("drop")
+                .whenScenarioStateIs("dropped").willSetStateTo("dropped twice")
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/html")
+                        .withBody("<html><form id=\"login\"></form></html>")));
+        autosys.stubFor(post(urlEqualTo("/authentication/login")).atPriority(1)
+                .withHeader("Host", containing("localhost"))
+                .willReturn(aResponse().withStatus(503).withBody("Service Unavailable")));
+        assertThat(status(token).statusCode()).isEqualTo(200);
+
+        assertThat(output.getAll())
+                .contains("AutoSys at " + DOWN + " is not usable for 'carol'")
+                .contains("AutoSys at " + second + " is not usable for 'carol' (AutoSys at " + second
+                        + " answered the login with status 503)")
+                .doesNotContain("autosys-login-rejected", "AutoSys rejected the proxy's login");
+        autosys.verify(2, postRequestedFor(urlEqualTo("/authentication/login"))
+                .withHeader("Host", containing("127.0.0.1")));
+        // a 503 is not a wrong password: the proxy keeps logging in
+        assertThat(status(token).statusCode()).isEqualTo(200);
     }
 
     private HttpResponse<String> status(String token) throws Exception {
