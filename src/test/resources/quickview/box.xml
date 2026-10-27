@@ -11,7 +11,7 @@
 <td></td><td nowrap>Oct 24, 2026 10:00:14 AM</td><td nowrap>Oct 24, 2026 10:02:47 AM</td>
 <td><img title="Success" alt="Success (SUCCESS)" src="/wcc/quickview/images/status/job_completed_16.png"></td>
 <td>711442132</td><td></td><td>0</td></tr></table>
-<input type="hidden" name="boxJobResultTable:rangeStart" value="0"></div>
+<input type="hidden" name="boxJobResultTable:rangeStart" value="0"><select id="boxJobResultTable:eventId" name="boxJobResultTable:eventId" onchange="submitForm('jobDetailsForm',1,{source:'boxJobResultTable:eventId'});return true;"><option value="0" selected>Start Job</option><option value="1">Force Start Job</option><option value="2">On Hold</option><option value="3">Off Hold</option><option value="8">Kill Job</option><option value="10">Send Event</option></select><input type="hidden" name="boxJobResultTable:sendEventTreeButton" value=""></div>
 <input type="hidden" name="treeTableId:rangeStart" value="0">
 <table summary=""><tr><th>Attribute Name</th><th>Attribute Value</th></tr>
 <tr><td><a href="#"><img alt="Select to collapse"></a> Primary</td><td></td></tr><tr><td>Name</td><td>TEST_BOX</td></tr>

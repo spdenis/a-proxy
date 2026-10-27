@@ -612,6 +612,34 @@ class QuickViewApiTest {
     }
 
     @Test
+    void killOfABoxUsesTheBoxTablesDropdownAndGoButton() throws Exception {
+        stubEvents("event-go.xml", 200);
+        autosys.stubFor(post(urlEqualTo(SEARCH)).atPriority(1)
+                .withRequestBody(containing("source=boxJobResultTable%3AeventId&"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/xml;charset=utf-8")
+                        .withBody(resource("event-chosen.xml"))));
+        autosys.stubFor(post(urlEqualTo(SEARCH)).atPriority(1)
+                .withRequestBody(containing("source=boxJobResultTable%3AsendEventTreeButton&"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/xml;charset=utf-8")
+                        .withBody(resource("event-go.xml"))));
+        String token = login();
+
+        HttpResponse<String> response = action("TEST_BOX", token, "{\"action\":\"KILLJOB\"}", null);
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+        assertThat(JsonMapper.shared().readTree(response.body()).at("/event").asString()).isEqualTo("Kill Job");
+
+        autosys.verify(1, postRequestedFor(urlEqualTo(SEARCH))
+                .withRequestBody(containing("boxJobResultTable%3AeventId=8&"))
+                .withRequestBody(containing("boxJobResultTable%3A_sm=&"))
+                .withRequestBody(containing("source=boxJobResultTable%3AeventId&")));
+        autosys.verify(1, postRequestedFor(urlEqualTo(SEARCH))
+                .withRequestBody(containing("boxJobResultTable%3AeventId=8&"))
+                .withRequestBody(containing("source=boxJobResultTable%3AsendEventTreeButton&"))
+                .withRequestBody(com.github.tomakehurst.wiremock.client.WireMock.notContaining("sendEventButton")));
+        autosys.verify(1, postRequestedFor(urlPathEqualTo(DIALOG)));
+    }
+
+    @Test
     void killIsSentLikeForceStart() throws Exception {
         stubEvents("event-go.xml", 200);
         autosys.stubFor(post(urlEqualTo(SEARCH)).atPriority(3).withRequestBody(containing("source=goButtonID&"))

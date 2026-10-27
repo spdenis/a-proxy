@@ -10,7 +10,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -488,7 +490,8 @@ public class QuickViewClient {
             if (others.size() == 1) {
                 select = others.getFirst();
                 String table = select.substring(0, select.length() - suffix.length());
-                button = table + (button.contains(":") ? button.substring(button.lastIndexOf(':')) : ":" + button);
+                button = tableButton(found, table,
+                        table + (button.contains(":") ? button.substring(button.lastIndexOf(':')) : ":" + button));
             }
         }
         Map<String, String> options = selects.getOrDefault(select, Map.of());
@@ -524,6 +527,21 @@ public class QuickViewClient {
     }
 
     /** Chooses the event in the dropdown ({@code choosing}), or presses Go with it chosen. */
+    /**
+     * The Go button of another results table, as its page names it: a box's tree table has
+     * {@code boxJobResultTable:sendEventTreeButton}, not the job table's {@code sendEventButton}.
+     */
+    private static String tableButton(String found, String table, String derived) {
+        Set<String> names = HtmlForms.inputs(found).keySet();
+        if (names.contains(derived)) {
+            return derived;
+        }
+        String prefix = table + ":";
+        return names.stream().filter(n -> n.startsWith(prefix))
+                .filter(n -> n.substring(prefix.length()).toLowerCase(Locale.ROOT).matches("sendevent\\w*button"))
+                .findFirst().orElse(derived);
+    }
+
     private Exchange postEvent(State state, String searchResponse, String job, EventChoice choice, boolean choosing) {
         Map<String, String> fields = pageFields(state, searchResponse);
         fields.put(quickview.searchField(), job);
@@ -535,6 +553,12 @@ public class QuickViewClient {
         if (choosing) {
             fields.put("state", "");
             fields.put("value", "");
+            // a tree table (a box's) also sends its selection, empty, as the browser does
+            String table = choice.select().contains(":")
+                    ? choice.select().substring(0, choice.select().lastIndexOf(':')) : null;
+            if (table != null && fields.containsKey(table + ":_us")) {
+                fields.putIfAbsent(table + ":_sm", "");
+            }
         }
         fields.put("event", quickview.eventEvent());
         return postPartial(state, fields);
