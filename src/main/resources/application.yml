@@ -43,6 +43,7 @@ autosys:
     max-connections: 50
     # truststore: file:/path/to/truststore.p12
     # truststore-password: ${TRUSTSTORE_PASSWORD}
+    trust-all-certificates: false   # true = do not check the AutoSys server certificate (test servers only)
   token:
     bind-client-ip: false
   webui:

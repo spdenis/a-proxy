@@ -134,7 +134,12 @@ public record AutosysProperties(
             /* PKCS12/JKS truststore with the internal CA; JVM default trust when unset. */
             @Nullable Resource truststore,
             @Nullable String truststorePassword,
-            @DefaultValue("PKCS12") String truststoreType) {
+            @DefaultValue("PKCS12") String truststoreType,
+            /*
+             * Skip the check of the AutoSys server certificate (any certificate and host name is accepted).
+             * Only for test servers with self-signed certificates; prefer a truststore.
+             */
+            @DefaultValue("false") boolean trustAllCertificates) {
     }
 
     public record Token(@DefaultValue("false") boolean bindClientIp) {

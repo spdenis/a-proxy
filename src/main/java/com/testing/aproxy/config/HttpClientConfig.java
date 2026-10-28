@@ -12,8 +12,12 @@ import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
 import org.apache.hc.client5.http.ssl.DefaultClientTlsStrategy;
+import org.apache.hc.client5.http.ssl.NoopHostnameVerifier;
+import org.apache.hc.client5.http.ssl.TrustAllStrategy;
 import org.apache.hc.core5.ssl.SSLContexts;
 import org.apache.hc.core5.util.Timeout;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.ClientHttpRequestFactory;
@@ -24,10 +28,13 @@ import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
  * <p>
  * The proxy must be transparent, so the client never follows redirects, never manages
  * cookies (the browser owns them) and never decompresses bodies. TLS trust comes from the
- * configured truststore or the JVM default; there is intentionally no "trust all" option.
+ * configured truststore or the JVM default; {@code autosys.http.trust-all-certificates} turns the
+ * certificate and host name checks off (test servers only).
  */
 @Configuration(proxyBeanMethods = false)
 public class HttpClientConfig {
+
+    private static final Logger log = LoggerFactory.getLogger(HttpClientConfig.class);
 
     @Bean(destroyMethod = "close")
     CloseableHttpClient autosysHttpClient(AutosysProperties properties) throws Exception {
@@ -39,7 +46,7 @@ public class HttpClientConfig {
                         .setConnectTimeout(Timeout.of(http.connectTimeout().toMillis(), TimeUnit.MILLISECONDS))
                         .setSocketTimeout(Timeout.of(http.readTimeout().toMillis(), TimeUnit.MILLISECONDS))
                         .build())
-                .setTlsSocketStrategy(new DefaultClientTlsStrategy(sslContext(http)))
+                .setTlsSocketStrategy(tlsStrategy(http))
                 .build();
         return HttpClients.custom()
                 .setConnectionManager(connectionManager)
@@ -58,6 +65,15 @@ public class HttpClientConfig {
     @Bean
     ClientHttpRequestFactory autosysClientHttpRequestFactory(CloseableHttpClient autosysHttpClient) {
         return new HttpComponentsClientHttpRequestFactory(autosysHttpClient);
+    }
+
+    private static DefaultClientTlsStrategy tlsStrategy(AutosysProperties.Http http) throws Exception {
+        if (http.trustAllCertificates()) {
+            log.warn("autosys.http.trust-all-certificates=true: the AutoSys server certificate is NOT checked");
+            SSLContext trustAll = SSLContexts.custom().loadTrustMaterial(null, TrustAllStrategy.INSTANCE).build();
+            return new DefaultClientTlsStrategy(trustAll, NoopHostnameVerifier.INSTANCE);
+        }
+        return new DefaultClientTlsStrategy(sslContext(http));
     }
 
     private static SSLContext sslContext(AutosysProperties.Http http) throws Exception {

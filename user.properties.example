@@ -11,6 +11,8 @@ server.port=8080
 # --- TLS trust for AutoSys (internal CA); JVM default trust if omitted
 #autosys.http.truststore=file:/path/to/truststore.p12
 #autosys.http.truststore-password=${TRUSTSTORE_PASSWORD}
+# Do not check the AutoSys server certificate at all (self-signed test servers only)
+#autosys.http.trust-all-certificates=true
 
 # --- Entry pages (AutoSys-relative)
 #autosys.proxy.start-page=/ui/Login.html
