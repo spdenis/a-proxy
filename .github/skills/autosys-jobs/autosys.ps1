@@ -17,6 +17,10 @@
     Names are saved with "autosys.ps1 proxy-add NAME URL" in ~/.autosys-proxy/proxies.json;
     "autosys.ps1 proxy-list" shows them.
 
+    Users with access to several AutoSys servers choose one (as Quick View's server dropdown shows it, e.g. QA5)
+    with, in this order: -Server NAME, AUTOSYS_SERVER, or "autosys.ps1 server-use NAME" (saved per proxy;
+    "server-use none" removes it). Without one the proxy uses its default, else the server chosen last.
+
     The API token (asp_..., from <proxy>/proxy/token) belongs to one proxy and is read from
       AUTOSYS_PROXY_TOKEN       environment variable, if set (used for whichever proxy is chosen), else
       a file per proxy          saved by "autosys.ps1 set-token": ~/.autosys-proxy/token for
@@ -39,7 +43,7 @@
 param(
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateSet('set-token', 'session', 'job', 'status', 'deps', 'runs', 'jobs', 'search', 'downstream', 'upstream', 'tree',
-        'force-start', 'change-status', 'kill', 'proxy-list', 'proxy-add', 'proxy-use')]
+        'force-start', 'change-status', 'kill', 'proxy-list', 'proxy-add', 'proxy-use', 'server-use')]
     [string]$Command,
 
     [Parameter(Position = 1)]
@@ -51,6 +55,10 @@ param(
 
     # the proxy to use for this call: a name saved with proxy-add, or a URL
     [string]$Proxy,
+
+    # AutoSys server of the job, as Quick View's server dropdown shows it (e.g. QA5); default AUTOSYS_SERVER,
+    # else the one saved with server-use for the proxy in use
+    [string]$Server,
 
     # traversals: how many levels to follow
     [int]$Depth = 5,
@@ -76,14 +84,18 @@ function Fail([string]$message) {
     exit 2
 }
 
-# ~/.autosys-proxy/proxies.json: { "current": "<name or URL>", "proxies": { "<name>": "<URL>" } }
+# ~/.autosys-proxy/proxies.json:
+#   { "current": "<name or URL>", "proxies": { "<name>": "<URL>" }, "servers": { "<URL>": "<AutoSys server>" } }
 function Read-Proxies {
-    $cfg = [ordered]@{ current = $null; proxies = [ordered]@{} }
+    $cfg = [ordered]@{ current = $null; proxies = [ordered]@{}; servers = [ordered]@{} }
     if (Test-Path -LiteralPath $proxiesFile) {
         try { $json = Get-Content -LiteralPath $proxiesFile -Raw | ConvertFrom-Json } catch { Fail "Cannot read ${proxiesFile}: $($_.Exception.Message)" }
         if ($json.current) { $cfg.current = [string]$json.current }
         if ($json.proxies) {
             foreach ($p in $json.proxies.PSObject.Properties) { $cfg.proxies[$p.Name] = ([string]$p.Value).TrimEnd('/') }
+        }
+        if ($json.servers) {
+            foreach ($p in $json.servers.PSObject.Properties) { $cfg.servers[$p.Name] = [string]$p.Value }
         }
     }
     return $cfg
@@ -121,6 +133,15 @@ if ($Proxy) { $base = Resolve-Proxy $Proxy }
 elseif ($env:AUTOSYS_PROXY_URL) { $base = Resolve-Proxy $env:AUTOSYS_PROXY_URL }
 elseif ($proxyCfg.current) { $base = Resolve-Proxy $proxyCfg.current }
 $tokenFile = Token-File $base
+
+# the AutoSys server saved with server-use for a proxy URL; null when none
+function Saved-Server([string]$url) {
+    foreach ($key in @($proxyCfg.servers.Keys)) { if ($key -eq $url) { return $proxyCfg.servers[$key] } }
+    return $null
+}
+$serverName = "$(Saved-Server $base)"
+if ($env:AUTOSYS_SERVER) { $serverName = $env:AUTOSYS_SERVER.Trim() }
+if ($Server) { $serverName = $Server.Trim() }
 $proxyHint = if ($Proxy) { " -Proxy $Proxy" } else { '' }
 $howToSetToken = "Log in to AutoSys through the proxy, press 'Copy token' on $base/proxy/token, then run: autosys.ps1 set-token$proxyHint"
 
@@ -129,9 +150,11 @@ switch ($Command) {
     'proxy-list' {
         $names = foreach ($key in $proxyCfg.proxies.Keys) {
             $url = $proxyCfg.proxies[$key]
-            [ordered]@{ name = $key; url = $url; current = ($url -eq $base); hasToken = (Test-Path -LiteralPath (Token-File $url)) }
+            [ordered]@{ name = $key; url = $url; current = ($url -eq $base); server = (Saved-Server $url)
+                hasToken = (Test-Path -LiteralPath (Token-File $url)) }
         }
-        [ordered]@{ using = $base; hasToken = (Test-Path -LiteralPath $tokenFile); proxies = @($names) } | ConvertTo-Json -Depth 5
+        [ordered]@{ using = $base; server = $(if ($serverName) { $serverName } else { $null })
+            hasToken = (Test-Path -LiteralPath $tokenFile); proxies = @($names) } | ConvertTo-Json -Depth 5
         exit 0
     }
     'proxy-add' {
@@ -154,6 +177,18 @@ switch ($Command) {
             Write-Output "No token saved for it yet: log in to AutoSys through it, press 'Copy token' on $url/proxy/token, then run: autosys.ps1 set-token"
         }
         if ($env:AUTOSYS_PROXY_URL) { Write-Output "Note: AUTOSYS_PROXY_URL is set in this terminal and takes precedence." }
+        exit 0
+    }
+    # the AutoSys server every call through the proxy in use searches, until changed
+    'server-use' {
+        if (-not $Name) { Fail 'Usage: autosys.ps1 server-use SERVER|none   (e.g. server-use QA5)' }
+        if ($Name -ne 'none' -and $Name -notmatch '^[A-Za-z0-9_.-]+$') { Fail "Server name '$Name' may only contain letters, digits, _ . -" }
+        foreach ($key in @($proxyCfg.servers.Keys)) { if ($key -eq $base) { $proxyCfg.servers.Remove($key) } }
+        if ($Name -ne 'none') { $proxyCfg.servers[$base] = $Name }
+        Save-Proxies $proxyCfg
+        if ($Name -eq 'none') { Write-Output "No AutoSys server saved for $base any more: the proxy's default is used." }
+        else { Write-Output "Calls through $base now search AutoSys server $Name." }
+        if ($env:AUTOSYS_SERVER) { Write-Output "Note: AUTOSYS_SERVER is set in this terminal and takes precedence." }
         exit 0
     }
 }
@@ -179,6 +214,10 @@ if ($Command -ne 'session' -and $Command -ne 'set-token' -and -not $Name) {
 
 # calls an API path; returns @{ ok; status; body } instead of throwing, so traversals can go on
 function Get-Api([string]$path, [string]$method = 'Get', $payload = $null) {
+    if ($serverName -and $path -ne '/api/v1/session') {
+        if ($payload) { $payload['server'] = $serverName }
+        else { $path += $(if ($path.Contains('?')) { '&' } else { '?' }) + 'server=' + [uri]::EscapeDataString($serverName) }
+    }
     try {
         $headers = @{ Authorization = "Bearer $token"; Accept = 'application/json' }
         if ($payload) {

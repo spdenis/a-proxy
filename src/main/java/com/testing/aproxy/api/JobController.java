@@ -68,23 +68,25 @@ public class JobController {
     }
 
     @GetMapping
-    public JobList search(@AuthenticationPrincipal ProxySession session, @RequestParam String name) {
+    public JobList search(@AuthenticationPrincipal ProxySession session, @RequestParam String name,
+            @RequestParam(required = false) @Nullable String server) {
         if (!JOB_SEARCH.matcher(name).matches()) {
             throw invalidName(name);
         }
-        JobPage page = JobPage.parse(quickView.searchJob(session, name));
+        JobPage page = JobPage.parse(quickView.searchJob(session, name, server(server)));
         return new JobList(name, page.results(), Instant.now());
     }
 
     @GetMapping("/{name}")
-    public JobDetails details(@AuthenticationPrincipal ProxySession session, @PathVariable String name) {
-        JobPage page = job(session, name);
+    public JobDetails details(@AuthenticationPrincipal ProxySession session, @PathVariable String name,
+            @RequestParam(required = false) @Nullable String server) {
+        JobPage page = job(session, name, server);
         JobPage.JobRow row = page.row(name).orElse(null);
         String jobName = page.attributes().get("Name");
         List<JobPage.JobRow> jobs = null;
         if (row != null && JobPage.BOX.equals(row.type())) {
             try {
-                jobs = JobPage.parse(quickView.expandBox(session, jobName)).jobsIn(jobName);
+                jobs = JobPage.parse(quickView.expandBox(session, jobName, server(server))).jobsIn(jobName);
             } catch (BackendException e) {
                 log.warn("[backend] jobs of box {} not listed: {}", jobName, e.getMessage());
             }
@@ -96,48 +98,64 @@ public class JobController {
     }
 
     @GetMapping("/{name}/jobs")
-    public BoxJobs jobs(@AuthenticationPrincipal ProxySession session, @PathVariable String name) {
-        JobPage page = job(session, name);
+    public BoxJobs jobs(@AuthenticationPrincipal ProxySession session, @PathVariable String name,
+            @RequestParam(required = false) @Nullable String server) {
+        JobPage page = job(session, name, server);
         JobPage.JobRow row = page.row(name).orElse(null);
         if (row == null || !JobPage.BOX.equals(row.type())) {
             throw new BackendException(HttpStatus.CONFLICT, "not-a-box", name + " is not a box job"
                     + (row == null || row.jobType() == null ? "" : " (its type is " + row.jobType() + ")"));
         }
         String jobName = page.attributes().get("Name");
-        return new BoxJobs(jobName, JobPage.parse(quickView.expandBox(session, jobName)).jobsIn(jobName),
+        return new BoxJobs(jobName, JobPage.parse(quickView.expandBox(session, jobName, server(server))).jobsIn(jobName),
                 Instant.now());
     }
 
     @GetMapping("/{name}/status")
-    public JobPage.JobRow status(@AuthenticationPrincipal ProxySession session, @PathVariable String name) {
-        return job(session, name).row(name).orElseThrow(() -> new BackendException(HttpStatus.BAD_GATEWAY,
+    public JobPage.JobRow status(@AuthenticationPrincipal ProxySession session, @PathVariable String name,
+            @RequestParam(required = false) @Nullable String server) {
+        return job(session, name, server).row(name).orElseThrow(() -> new BackendException(HttpStatus.BAD_GATEWAY,
                 "unexpected-response", "Quick View showed job " + name + " but no status row"));
     }
 
     @GetMapping("/{name}/dependencies")
-    public JobDependencies dependencies(@AuthenticationPrincipal ProxySession session, @PathVariable String name) {
-        JobPage page = job(session, name);
+    public JobDependencies dependencies(@AuthenticationPrincipal ProxySession session, @PathVariable String name,
+            @RequestParam(required = false) @Nullable String server) {
+        JobPage page = job(session, name, server);
         return new JobDependencies(page.attributes().get("Name"), page.attributes().get("Condition"),
                 page.conditions(), page.dependents(), Instant.now());
     }
 
     @GetMapping("/{name}/runs")
-    public JobRuns runs(@AuthenticationPrincipal ProxySession session, @PathVariable String name) {
-        JobPage page = job(session, name);
+    public JobRuns runs(@AuthenticationPrincipal ProxySession session, @PathVariable String name,
+            @RequestParam(required = false) @Nullable String server) {
+        JobPage page = job(session, name, server);
         return new JobRuns(page.attributes().get("Name"), page.runs(), Instant.now());
     }
 
-    private JobPage job(ProxySession session, String name) {
+    private JobPage job(ProxySession session, String name, @Nullable String server) {
         if (!JOB_NAME.matcher(name).matches()) {
             throw invalidName(name);
         }
-        JobPage page = JobPage.parse(quickView.searchJob(session, name));
+        JobPage page = JobPage.parse(quickView.searchJob(session, name, server(server)));
         if (!page.hasDetailsFor(name)) {
             throw new BackendException(HttpStatus.NOT_FOUND, "job-not-found", "No job named " + name
                     + (page.results().isEmpty() ? "" : " (the search matched " + page.results().size() + " other jobs)"));
         }
         session.rememberJob(page.attributes().get("Name"));
         return page;
+    }
+
+    /** The AutoSys server asked for (its label in Quick View's server dropdown), null when none. */
+    static @Nullable String server(@Nullable String server) {
+        if (server == null || server.isBlank()) {
+            return null;
+        }
+        String s = server.strip();
+        if (s.length() > 100) {
+            throw new BackendException(HttpStatus.BAD_REQUEST, "unknown-server", "Server name too long");
+        }
+        return s;
     }
 
     static BackendException invalidName(String name) {

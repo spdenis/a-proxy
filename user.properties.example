@@ -18,6 +18,9 @@ server.port=8080
 #autosys.proxy.start-page=/ui/Login.html
 #autosys.webui.login.landing-page=/ui/Home.html
 
+# --- AutoSys server searched by API calls that name none (users with access to several, e.g. QA1 and QA5)
+#autosys.webui.quickview.server=QA5
+
 # --- Login exchange (see README "Teach the proxy how your AutoSys login looks")
 autosys.webui.login.discovery-log=true
 autosys.webui.login.path=/path/to/login/submit

@@ -212,10 +212,18 @@ public record AutosysProperties(
             @DefaultValue({"AntiXSRFToken", "OWASP-CSRFTOKEN", "conversationContext"}) List<String> dialogParams,
             /* id of the element with the page's (error) messages. */
             @DefaultValue("pageMessages") String messagesId,
+            /* Dropdown of the AutoSys servers, shown when the user has access to more than one. */
+            @DefaultValue("serverCombo_input") String serverSelect,
+            /*
+             * Server searched when an API call names none (its label in the dropdown, e.g. QA5); empty = the one
+             * the call before chose, at first the page's own choice.
+             */
+            @Nullable String server,
             @Valid @DefaultValue SendEvent sendEvent) {
 
         public Quickview {
             loginPage = blankToNull(loginPage);
+            server = blankToNull(server);
             eventIds = eventIds == null ? Map.of() : Map.copyOf(eventIds);
         }
     }

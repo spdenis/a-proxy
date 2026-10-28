@@ -64,8 +64,12 @@ public class JobActionController {
         this.recent = Caffeine.newBuilder().expireAfterAccess(Duration.ofMinutes(2)).build();
     }
 
-    /** @param status for CHANGE_STATUS: RUNNING, STARTING, SUCCESS, FAILURE, INACTIVE, TERMINATED (as Quick View offers) */
-    public record ActionRequest(@Nullable String action, @Nullable String status, @Nullable String comment) {
+    /**
+     * @param status for CHANGE_STATUS: RUNNING, STARTING, SUCCESS, FAILURE, INACTIVE, TERMINATED (as Quick View offers)
+     * @param server AutoSys server of the job, its label in Quick View's server dropdown (e.g. QA5); null = default
+     */
+    public record ActionRequest(@Nullable String action, @Nullable String status, @Nullable String comment,
+            @Nullable String server) {
     }
 
     /**
@@ -126,7 +130,7 @@ public class JobActionController {
             ResponseEntity<?> response;
             try {
                 QuickViewClient.EventResult result = quickView.sendEvent(session, name, action, status, comment,
-                        actions.readStatusAfter());
+                        JobController.server(body.server()), actions.readStatusAfter());
                 audit.jobAction(session.username(), session.sessionId(), request.getRemoteAddr(), result.job(),
                         what, result.outcome().name(), requestId, result.message(), comment);
                 response = response(result, action, status, requestId);

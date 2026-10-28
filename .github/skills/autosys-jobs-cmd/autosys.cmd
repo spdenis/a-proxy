@@ -2,7 +2,7 @@
 rem Queries AutoSys jobs through the AutoSys proxy API and prints its JSON answer.
 rem Pure cmd: needs only curl.exe (part of Windows 10 1803 and later), no PowerShell.
 rem
-rem   autosys.cmd COMMAND [NAME] [-Proxy NAME_OR_URL] [-Status STATUS] [-Comment "text"]
+rem   autosys.cmd COMMAND [NAME] [-Proxy NAME_OR_URL] [-Server SERVER] [-Status STATUS] [-Comment "text"]
 rem
 rem   session                       who am I, token expiry
 rem   job NAME / status NAME / deps NAME / runs NAME / jobs BOX
@@ -14,9 +14,13 @@ rem   set-token [TOKEN]             saves the token of the chosen proxy (asks fo
 rem   proxy-add NAME URL            saves a proxy under a name
 rem   proxy-use NAME_OR_URL         makes it the proxy every later call uses
 rem   proxy-list                    the proxy in use and the saved ones
+rem   server-use SERVER             AutoSys server every call through the proxy in use searches (none = remove)
 rem
 rem The proxy is, in this order: -Proxy on the call, AUTOSYS_PROXY_URL (a URL or a saved name),
 rem the one chosen with proxy-use, http://localhost:8080.
+rem AutoSys server of the job as Quick View's server dropdown shows it, e.g. QA5, for users with access to
+rem several: -Server, else AUTOSYS_SERVER, else the one saved with server-use for the proxy in use; without one
+rem the proxy's default, else the server chosen last.
 rem The token is read from AUTOSYS_PROXY_TOKEN if set, else from the chosen proxy's own file in
 rem %%USERPROFILE%%\.autosys-proxy (token for http://localhost:8080, token-SCHEME-HOST-PORT for others;
 rem the same files as autosys.ps1), or from AUTOSYS_PROXY_TOKEN_FILE.
@@ -27,12 +31,14 @@ set "CMD="
 set "NAME="
 set "URLARG="
 set "PROXY="
+set "SERVER="
 set "STATUS="
 set "COMMENT="
 
 :parse
 if "%~1"=="" goto parsed
 if /i "%~1"=="-Proxy" ( set "PROXY=%~2" & shift & shift & goto parse )
+if /i "%~1"=="-Server" ( set "SERVER=%~2" & shift & shift & goto parse )
 if /i "%~1"=="-Status" ( set "STATUS=%~2" & shift & shift & goto parse )
 if /i "%~1"=="-Comment" ( set "COMMENT=%~2" & shift & shift & goto parse )
 if not defined CMD ( set "CMD=%~1" & shift & goto parse )
@@ -53,10 +59,11 @@ set "DEFAULT_URL=http://localhost:8080"
 set "CFG=%USERPROFILE%\.autosys-proxy"
 set "PROXIES=%CFG%\proxies.txt"
 set "CURRENT=%CFG%\current-proxy.txt"
+set "SERVERS=%CFG%\servers.txt"
 set "TMPB=%TEMP%\aproxy-%RANDOM%%RANDOM%"
 
 set "OK="
-for %%c in (set-token session job status deps runs jobs search force-start kill change-status proxy-list proxy-add proxy-use) do if /i "!CMD!"=="%%c" set "CMD=%%c" & set "OK=1"
+for %%c in (set-token session job status deps runs jobs search force-start kill change-status proxy-list proxy-add proxy-use server-use) do if /i "!CMD!"=="%%c" set "CMD=%%c" & set "OK=1"
 if not defined OK goto usage
 
 rem --- which proxy
@@ -80,6 +87,22 @@ call :tokenfile
 set "HOWTO=Log in to AutoSys through the proxy, press Copy token on !BASE!/proxy/token, then run in your own terminal: autosys.cmd set-token"
 if defined PROXY set "HOWTO=!HOWTO! -Proxy !PROXY!"
 
+rem --- which AutoSys server
+if not defined SERVER if defined AUTOSYS_SERVER set "SERVER=!AUTOSYS_SERVER!"
+if not defined SERVER (
+    set "U=!BASE!"
+    call :savedserver
+    set "SERVER=!SS!"
+)
+set "SRVARG="
+if not defined SERVER goto served
+set "CHK=!SERVER!"
+set "ALLOW=%NAMECHARS%"
+call :onlychars
+if errorlevel 1 ( >&2 echo Not a valid AutoSys server name: letters, digits, _ . - only. & exit /b 2 )
+set "SRVARG=--data-urlencode "server=!SERVER!""
+:served
+
 goto cmd_%CMD%
 
 rem ===================================================================== proxies
@@ -90,6 +113,9 @@ set "T=no"
 if exist "!TF!" set "T=yes"
 if defined AUTOSYS_PROXY_TOKEN set "T=yes, from AUTOSYS_PROXY_TOKEN"
 echo Token saved: !T!
+set "T=none - the proxy's default"
+if defined SERVER set "T=!SERVER!"
+echo AutoSys server: !T!
 if not exist "%PROXIES%" (
     echo No proxies saved yet. Add one with: autosys.cmd proxy-add NAME URL
     exit /b 0
@@ -102,7 +128,9 @@ for /f "usebackq eol=# tokens=1,* delims==" %%a in ("%PROXIES%") do (
     if exist "!TF!" set "T=yes"
     set "M= "
     if /i "%%b"=="!BASE!" set "M=*"
-    echo  !M! %%a = %%b   token: !T!
+    call :savedserver
+    if not defined SS set "SS=-"
+    echo  !M! %%a = %%b   token: !T!   server: !SS!
 )
 exit /b 0
 
@@ -145,6 +173,31 @@ call :tokenfile
 echo Now using !NAME! = !R!
 if not exist "!TF!" if not defined AUTOSYS_PROXY_TOKEN echo No token saved for it yet: log in to AutoSys through it, press Copy token on !R!/proxy/token, then run: autosys.cmd set-token
 if defined AUTOSYS_PROXY_URL echo Note: AUTOSYS_PROXY_URL is set in this terminal and takes precedence.
+exit /b 0
+
+rem the AutoSys server every call through the proxy in use searches, until changed
+:cmd_server-use
+if not defined NAME goto usage
+if /i "!NAME!"=="none" goto server_valid
+set "CHK=!NAME!"
+set "ALLOW=%NAMECHARS%"
+call :onlychars
+if errorlevel 1 ( >&2 echo Server name "!NAME!" may only contain letters, digits, _ . - & exit /b 2 )
+:server_valid
+if not exist "%CFG%" mkdir "%CFG%"
+if exist "%SERVERS%" (
+    findstr /v /b /i /l /c:"!BASE!=" "%SERVERS%" >"%SERVERS%.tmp"
+) else (
+    type nul >"%SERVERS%.tmp"
+)
+if /i not "!NAME!"=="none" >>"%SERVERS%.tmp" echo(!BASE!=!NAME!
+move /y "%SERVERS%.tmp" "%SERVERS%" >nul
+if /i "!NAME!"=="none" (
+    echo No AutoSys server saved for !BASE! any more: the proxy's default is used.
+) else (
+    echo Calls through !BASE! now search AutoSys server !NAME!.
+)
+if defined AUTOSYS_SERVER echo Note: AUTOSYS_SERVER is set in this terminal and takes precedence.
 exit /b 0
 
 rem ===================================================================== token
@@ -237,6 +290,7 @@ if errorlevel 1 exit /b 2
 set "APIPATH=!JP!/actions"
 set "J={"action":"!ACTION!""
 if "!ACTION!"=="CHANGE_STATUS" set "J=!J!,"status":"!STATUS!""
+if defined SERVER set "J=!J!,"server":"!SERVER!""
 if not defined COMMENT goto action_send
 set "JC=!COMMENT:\=\\!"
 set "JC=!JC:"=\"!"
@@ -273,17 +327,19 @@ exit /b !RC!
 
 rem ===================================================================== helpers
 
-rem METHOD, APIPATH, optional QUERY (name=value, URL-encoded by curl), TOKEN -> CODE, %TMPB%.body
+rem METHOD, APIPATH, optional QUERY (name=value, URL-encoded by curl), SRVARG, TOKEN -> CODE, %TMPB%.body
 :api
 >"%TMPB%.hdr" echo(Authorization: Bearer !TOKEN!
 set "CODE=000"
 if "!METHOD!"=="POST" (
     rem lets the proxy answer a duplicate of this request from the first one instead of acting twice
     curl.exe -sS --max-time 180 -o "%TMPB%.body" -w "%%{http_code}" -H "@%TMPB%.hdr" -H "Accept: application/json" -H "Content-Type: application/json" -H "Idempotency-Key: cmd-%RANDOM%%RANDOM%-%RANDOM%%RANDOM%-%RANDOM%" -X POST --data-binary "@%TMPB%.json" "!BASE!!APIPATH!" >"%TMPB%.code" 2>"%TMPB%.err"
-) else if defined QUERY (
-    curl.exe -sS --max-time 120 -o "%TMPB%.body" -w "%%{http_code}" -H "@%TMPB%.hdr" -H "Accept: application/json" -G --data-urlencode "!QUERY!" "!BASE!!APIPATH!" >"%TMPB%.code" 2>"%TMPB%.err"
 ) else (
-    curl.exe -sS --max-time 120 -o "%TMPB%.body" -w "%%{http_code}" -H "@%TMPB%.hdr" -H "Accept: application/json" "!BASE!!APIPATH!" >"%TMPB%.code" 2>"%TMPB%.err"
+    set "QARG="
+    if defined QUERY set "QARG=--data-urlencode "!QUERY!""
+    set "SARG="
+    if not "!APIPATH!"=="/api/v1/session" set "SARG=!SRVARG!"
+    curl.exe -sS --max-time 120 -o "%TMPB%.body" -w "%%{http_code}" -H "@%TMPB%.hdr" -H "Accept: application/json" -G !QARG! !SARG! "!BASE!!APIPATH!" >"%TMPB%.code" 2>"%TMPB%.err"
 )
 del /q "%TMPB%.hdr" 2>nul
 if exist "%TMPB%.code" set /p CODE=<"%TMPB%.code"
@@ -333,6 +389,12 @@ if not defined R ( >&2 echo Unknown proxy "!V!". Add it with: autosys.cmd proxy-
 if "!R:~-1!"=="/" set "R=!R:~0,-1!"
 exit /b 0
 
+rem U, a proxy URL -> SS, the AutoSys server saved for it with server-use (empty when none)
+:savedserver
+set "SS="
+if exist "%SERVERS%" for /f "usebackq eol=# tokens=1,* delims==" %%m in ("%SERVERS%") do if /i "%%m"=="!U!" set "SS=%%n"
+exit /b 0
+
 rem U, a proxy URL -> TF, the file with its token (tokens are per proxy, never sent to another one)
 :tokenfile
 if defined AUTOSYS_PROXY_TOKEN_FILE ( set "TF=!AUTOSYS_PROXY_TOKEN_FILE!" & exit /b 0 )
@@ -348,8 +410,8 @@ del /q "%TMPB%.*" 2>nul
 exit /b 0
 
 :usage
-echo Usage: autosys.cmd COMMAND [NAME] [-Proxy NAME_OR_URL] [-Status STATUS] [-Comment "text"]
+echo Usage: autosys.cmd COMMAND [NAME] [-Proxy NAME_OR_URL] [-Server SERVER] [-Status STATUS] [-Comment "text"]
 echo   session ^| job NAME ^| status NAME ^| deps NAME ^| runs NAME ^| jobs BOX ^| search "PATTERN*"
 echo   force-start NAME ^| kill NAME ^| change-status NAME -Status STATUS   [-Comment "why"]
-echo   set-token [TOKEN] ^| proxy-add NAME URL ^| proxy-use NAME_OR_URL ^| proxy-list
+echo   set-token [TOKEN] ^| proxy-add NAME URL ^| proxy-use NAME_OR_URL ^| proxy-list ^| server-use SERVER
 exit /b 2

@@ -47,7 +47,7 @@ The script talks to one proxy per call, chosen by: `-Proxy NAME|URL` on the call
 Use the helper script `autosys.ps1` in this skill's directory. It prints JSON:
 
 ```powershell
-powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File <skill-dir>/autosys.ps1 <command> <JOB_NAME> [-Depth N] [-MaxJobs N]
+powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File <skill-dir>/autosys.ps1 <command> <JOB_NAME> [-Depth N] [-MaxJobs N] [-Server NAME]
 ```
 
 (`pwsh` works the same on PowerShell 7 and on macOS/Linux.) Exit code 0 = success, 1 = the API returned a
@@ -84,6 +84,21 @@ Endpoints: `GET /api/v1/jobs/{name}`, `/{name}/status`, `/{name}/dependencies`, 
 `/{name}/jobs`, `GET /api/v1/jobs?name=<pattern>`, `GET /api/v1/session`;
 `POST /api/v1/jobs/{name}/actions` with `{"action":"FORCE_STARTJOB","comment":"..."}` or
 `{"action":"CHANGE_STATUS","status":"INACTIVE","comment":"..."}`.
+
+## AutoSys server
+
+Some users have access to several AutoSys servers (Quick View shows a server dropdown, e.g. QA1 and QA5). A job
+lives on one of them, and a search on the other one answers `job-not-found`.
+
+- When the user names a server ("JOB on QA5"), add `-Server QA5` to every call of that answer (traversals
+  included). `AUTOSYS_SERVER` sets it for the whole terminal.
+- The user can save a server for the proxy in use: `server-use QA5` (asked as "always use QA5", "switch to
+  QA5"); every later call searches it without `-Server`. `server-use none` removes it; `proxy-list` shows it.
+  Run `server-use` only when the user asks to change the saved server; for one question use `-Server`.
+- Order: `-Server`, then `AUTOSYS_SERVER`, then the saved server; with none of them the proxy searches its
+  configured default server, else the server chosen last.
+- A `job-not-found` for a job the user is sure exists: ask which AutoSys server it is on, then retry with `-Server`.
+- For actions, name the server in the confirmation question ("Force start TEST_JOB on QA5 now?").
 
 ## What the results mean
 
@@ -174,6 +189,7 @@ The API returns `application/problem+json` with `type` and `detail`:
 | 404 `job-not-found` | No such job (`detail` may say the search matched other jobs: offer `search`). |
 | 409 `not-a-box` | `jobs` / `tree` on a regular job: answer with `job` instead. |
 | 409 `autosys-action-rejected`, 502 `autosys-action-unknown` | See [Force start](#force-start). |
+| 400 `unknown-server` | The user has no AutoSys server with that name; `detail` lists the ones Quick View offers. Ask which one. |
 | 400 `invalid-status` | `change-status` without a valid `-Status` (or `-Status` given to another action). |
 | 429 `rate-limited` | Too many actions in a minute: wait, do not loop. |
 | 403 `actions-disabled` | Actions are switched off on this proxy. |

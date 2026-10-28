@@ -16,7 +16,7 @@ Use the helper script `autosys.cmd` in this skill's directory (plain cmd and `cu
 the API's JSON:
 
 ```
-cmd /c "<skill-dir>\autosys.cmd" <command> <JOB_NAME> [-Comment "text"] [-Status STATUS]
+cmd /c "<skill-dir>\autosys.cmd" <command> <JOB_NAME> [-Comment "text"] [-Status STATUS] [-Server NAME]
 ```
 
 Exit code 0 = success, 1 = the API returned a problem (printed as JSON), 2 = setup problem (message on stderr).
@@ -79,6 +79,21 @@ your own.
   TEST_JOB on uat now?"); `proxy-list` tells you which one is in use.
 - `-Proxy NAME_OR_URL` on a single call overrides the selection; use it only when the user asks for one call on
   another proxy.
+
+## AutoSys server
+
+Some users have access to several AutoSys servers (Quick View shows a server dropdown, e.g. QA1 and QA5). A job
+lives on one of them, and a search on the other one answers `job-not-found`.
+
+- When the user names a server ("JOB on QA5"), add `-Server QA5` to every call of that answer (chain walks
+  included). `AUTOSYS_SERVER` sets it for the whole terminal.
+- The user can save a server for the proxy in use: `server-use QA5` (asked as "always use QA5", "switch to
+  QA5"); every later call searches it without `-Server`. `server-use none` removes it; `proxy-list` shows it.
+  Run `server-use` only when the user asks to change the saved server; for one question use `-Server`.
+- Order: `-Server`, then `AUTOSYS_SERVER`, then the saved server; with none of them the proxy searches its
+  configured default server, else the server chosen last.
+- A `job-not-found` for a job the user is sure exists: ask which AutoSys server it is on, then retry with `-Server`.
+- For actions, name the server in the confirmation question ("Force start TEST_JOB on QA5 now?").
 
 ## What the results mean
 
@@ -164,6 +179,7 @@ The API returns `application/problem+json` with `type` and `detail`:
 | 404 `job-not-found` | No such job (`detail` may say the search matched other jobs: offer `search`). |
 | 409 `not-a-box` | `jobs` on a regular job: answer with `job` instead. |
 | 409 `autosys-action-rejected`, 502 `autosys-action-unknown` | See [Force start](#force-start). |
+| 400 `unknown-server` | The user has no AutoSys server with that name; `detail` lists the ones Quick View offers. Ask which one. |
 | 400 `invalid-status` | `change-status` without a valid `-Status` (or `-Status` given to another action). |
 | 429 `rate-limited` | Too many actions in a minute: wait, do not loop. |
 | 403 `actions-disabled` | Actions are switched off on this proxy. |

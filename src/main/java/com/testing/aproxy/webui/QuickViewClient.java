@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -116,6 +117,10 @@ public class QuickViewClient {
         boolean borrowed;
         /* when this session last sent a request to AutoSys */
         volatile long lastSentNanos;
+        /* the AutoSys servers the page offers (dropdown value to label), learnt from the page; null = not seen yet */
+        @Nullable Map<String, String> servers;
+        /* label of the server chosen last; kept when the page is opened again, so the choice stays */
+        @Nullable String serverLabel;
 
         State(URI base) {
             this.base = base;
@@ -128,14 +133,23 @@ public class QuickViewClient {
             form = null;
             pageUrl = null;
             usedPage = null;
+            servers = null;
         }
     }
 
     /** Searches Quick View for a job name (wildcards as the UI allows) and returns the partial-page response. */
     public String searchJob(ProxySession session, String jobName) {
+        return searchJob(session, jobName, null);
+    }
+
+    /**
+     * As {@link #searchJob(ProxySession, String)}, on the AutoSys server with this label (as Quick View's server
+     * dropdown shows it); null = the configured default server, else the one chosen last.
+     */
+    public String searchJob(ProxySession session, String jobName, @Nullable String server) {
         session.lock().lock();
         try {
-            return search(session, state(session), jobName);
+            return search(session, state(session), jobName, server);
         } finally {
             session.lock().unlock();
         }
@@ -146,10 +160,15 @@ public class QuickViewClient {
      * returns that response, which lists the box and the jobs directly in it.
      */
     public String expandBox(ProxySession session, String boxName) {
+        return expandBox(session, boxName, null);
+    }
+
+    /** As {@link #expandBox(ProxySession, String)}, on this AutoSys server (see {@link #searchJob(ProxySession, String, String)}). */
+    public String expandBox(ProxySession session, String boxName, @Nullable String server) {
         session.lock().lock();
         try {
             State state = state(session);
-            String found = search(session, state, boxName);
+            String found = search(session, state, boxName, server);
             Exchange response = postExpand(state, boxName, found);
             String problem = partialResponseProblem(response);
             if (problem != null) {
@@ -204,10 +223,16 @@ public class QuickViewClient {
      */
     public EventResult sendEvent(ProxySession session, String jobName, JobAction action, @Nullable String status,
             @Nullable String comment, boolean readStatusAfter) {
+        return sendEvent(session, jobName, action, status, comment, null, readStatusAfter);
+    }
+
+    /** As above, on this AutoSys server (see {@link #searchJob(ProxySession, String, String)}). */
+    public EventResult sendEvent(ProxySession session, String jobName, JobAction action, @Nullable String status,
+            @Nullable String comment, @Nullable String server, boolean readStatusAfter) {
         session.lock().lock();
         try {
             State state = state(session);
-            String found = search(session, state, jobName);
+            String found = search(session, state, jobName, server);
             JobPage page = JobPage.parse(found);
             // the event goes to the job in the results: it must be the only one there
             if (!page.hasDetailsFor(jobName) || page.results().size() != 1 || page.row(jobName).isEmpty()) {
@@ -301,7 +326,7 @@ public class QuickViewClient {
         String statusAfter = null;
         if (readStatusAfter) {
             try {
-                String after = search(session, state, job);
+                String after = search(session, state, job, null);
                 statusAfter = JobPage.parse(after).row(job).map(JobPage.JobRow::status).orElse(null);
                 message = join(message == null || message.isEmpty() ? null : message, messages(after));
             } catch (BackendException e) {
@@ -732,7 +757,7 @@ public class QuickViewClient {
                     && System.nanoTime() - existing.lastSentNanos < quietFor.toNanos()) {
                 return false;
             }
-            search(session, state(session), jobName);
+            search(session, state(session), jobName, null);
             return true;
         } finally {
             session.lock().unlock();
@@ -745,7 +770,8 @@ public class QuickViewClient {
         return state;
     }
 
-    private String search(ProxySession session, State state, String jobName) {
+    private String search(ProxySession session, State state, String jobName, @Nullable String server) {
+        String wanted = server != null ? server : quickview.server() != null ? quickview.server() : state.serverLabel;
         String lastProblem = "no attempt";
         int attempts = Math.max(1, quickview.maxAttempts()) + bases.size() - 1;
         for (int attempt = 1; attempt <= attempts; attempt++) {
@@ -754,9 +780,25 @@ public class QuickViewClient {
             }
             String problem;
             Exchange response = null;
+            String serverValue = serverValue(session, state, wanted);
             try {
-                response = postSearch(state, jobName);
+                response = postSearch(state, jobName, serverValue);
                 problem = partialResponseProblem(response);
+                if (problem == null) {
+                    remember(state, response.body());
+                    learnServers(state, response.body());
+                    if (serverValue == null && wanted != null && state.servers != null) {
+                        // the page's servers were not known before this search: search again on the one asked for
+                        String value = serverValue(session, state, wanted);
+                        if (value != null && !value.equals(selectedServer(response.body()))) {
+                            response = postSearch(state, jobName, value);
+                            problem = partialResponseProblem(response);
+                            if (problem == null) {
+                                remember(state, response.body());
+                            }
+                        }
+                    }
+                }
             } catch (BackendException e) {
                 if (!e.type().equals(UNREACHABLE)) {
                     throw e;
@@ -764,7 +806,6 @@ public class QuickViewClient {
                 problem = e.getMessage();
             }
             if (problem == null) {
-                remember(state, response.body());
                 return response.body();
             }
             lastProblem = problem;
@@ -904,6 +945,7 @@ public class QuickViewClient {
         }
         state.form = form;
         state.pageUrl = page.uri().toString();
+        learnServers(state, page.exchange().body());
         log.info("[backend] Quick View opened for '{}' with {} ({} form fields, cookies {})", session.username(),
                 borrowed ? "the browser's AutoSys session" : "the proxy's own login on " + state.base,
                 form.fields().size(), state.cookies.names());
@@ -1013,7 +1055,13 @@ public class QuickViewClient {
         }
     }
 
-    private Exchange postSearch(State state, String jobName) {
+    private Exchange postSearch(State state, String jobName, @Nullable String serverValue) {
+        if (serverValue != null) {
+            // later requests of the page (box expansion, job events) carry the same server
+            Map<String, String> withServer = new LinkedHashMap<>(state.form.fields());
+            withServer.put(quickview.serverSelect(), serverValue);
+            state.form = new HtmlForms.Form(state.form.action(), withServer);
+        }
         HtmlForms.Form form = state.form;
         Map<String, String> fields = new LinkedHashMap<>(form.fields());
         // tokens the action carries (AntiXSRFToken, conversationContext) are also sent as fields
@@ -1076,6 +1124,44 @@ public class QuickViewClient {
             return "not a partial-page response (" + response.contentType() + ")";
         }
         return null;
+    }
+
+    /** Remembers the AutoSys servers that the page's server dropdown offers, when the markup has it. */
+    private void learnServers(State state, String body) {
+        Map<String, String> options = HtmlForms.selects(body).get(quickview.serverSelect());
+        if (options != null && !options.isEmpty()) {
+            state.servers = Collections.unmodifiableMap(new LinkedHashMap<>(options));
+        }
+    }
+
+    /** The server selected in a response's server dropdown; null when it shows none. */
+    private @Nullable String selectedServer(String body) {
+        HtmlForms.Form updated = HtmlForms.find(body, quickview.form());
+        Map<String, String> fields = updated != null ? updated.fields() : HtmlForms.inputs(body);
+        return fields.get(quickview.serverSelect());
+    }
+
+    /**
+     * The dropdown value of server {@code wanted} (its label, or the value itself), or null when no server is
+     * asked for or the page's servers are not known yet (the page has no server dropdown, or it is the browser's
+     * page and was not searched yet).
+     */
+    private @Nullable String serverValue(ProxySession session, State state, @Nullable String wanted) {
+        if (wanted == null || state.servers == null) {
+            return null;
+        }
+        for (Map.Entry<String, String> option : state.servers.entrySet()) {
+            if (option.getValue().equalsIgnoreCase(wanted) || option.getKey().equals(wanted)) {
+                if (!option.getValue().equals(state.serverLabel)) {
+                    log.info("[backend] '{}' searches AutoSys server {}", session.username(), option.getValue());
+                }
+                state.serverLabel = option.getValue();
+                return option.getKey();
+            }
+        }
+        throw new BackendException(HttpStatus.BAD_REQUEST, "unknown-server", "Quick View offers user '"
+                + session.username() + "' no AutoSys server " + wanted + "; it offers: "
+                + String.join(", ", state.servers.values()));
     }
 
     /** The next request must carry the ViewState (and form action) of the latest response. */

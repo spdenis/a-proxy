@@ -90,6 +90,8 @@ autosys:
       confirm-button: sendEvtYes
       dialog-params: [AntiXSRFToken, OWASP-CSRFTOKEN, conversationContext]  # from the page URL if missing
       messages-id: pageMessages
+      server-select: serverCombo_input   # dropdown of AutoSys servers (users with access to several)
+      server:                       # e.g. QA5: server for API calls that name none; empty = the last one chosen
       send-event:                   # the Send Event dialog: event type, its fields (status), OK
         path: /wcc/quickview/pages/dialog/autosysSendEvent.jsf
         form: sendeventDialog

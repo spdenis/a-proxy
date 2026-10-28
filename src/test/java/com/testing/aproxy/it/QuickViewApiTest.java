@@ -707,6 +707,27 @@ class QuickViewApiTest {
     }
 
     /** Browser-style XHR login through the proxy; returns the API token from the token page. */
+    @Test
+    void serverIsChosenByItsLabelAndKeptForLaterCalls() throws Exception {
+        String token = login();
+
+        // the page offers 0 = QA5 (selected) and 1 = QA6
+        assertThat(api("/api/v1/jobs/TEST_FX_LOADER/status?server=qa6", token, 200).at("/status").asString())
+                .isEqualTo("SUCCESS");
+        autosys.verify(1, postRequestedFor(urlEqualTo(SEARCH)).withRequestBody(containing("serverCombo_input=1&")));
+
+        // a call that names no server stays on the one chosen last
+        api("/api/v1/jobs/TEST_FX_LOADER/status", token, 200);
+        autosys.verify(2, postRequestedFor(urlEqualTo(SEARCH)).withRequestBody(containing("serverCombo_input=1&")));
+
+        api("/api/v1/jobs/TEST_FX_LOADER/status?server=QA5", token, 200);
+        autosys.verify(1, postRequestedFor(urlEqualTo(SEARCH)).withRequestBody(containing("serverCombo_input=0&")));
+
+        JsonNode unknown = api("/api/v1/jobs/TEST_FX_LOADER/status?server=QA1", token, 400);
+        assertThat(unknown.at("/type").asString()).isEqualTo("/problems/unknown-server");
+        assertThat(unknown.at("/detail").asString()).contains("no AutoSys server QA1").contains("QA5, QA6");
+    }
+
     private String login() throws Exception {
         HttpResponse<String> login = browser.post("/authentication/login", "application/json",
                 "{\"username\":\"carol\",\"password\":\"" + PASSWORD + "\",\"remember\":false}",
