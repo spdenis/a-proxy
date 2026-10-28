@@ -5,7 +5,8 @@ description: Look up AutoSys jobs through the local AutoSys proxy API - job stat
 
 # AutoSys jobs via the AutoSys proxy
 
-The AutoSys proxy (running locally, default `http://localhost:8080`) answers a REST API by driving WCC
+The AutoSys proxy (by default running locally on `http://localhost:8080`; there can be several, see
+[Choosing the proxy](#choosing-the-proxy)) answers a REST API by driving WCC
 Quick View with the user's own AutoSys session. Use it for every question about AutoSys jobs; never guess job
 data. Everything is read-only except `force-start`, `kill` and `change-status` (see [Force start](#force-start),
 [Kill](#kill) and [Change status](#change-status)).
@@ -15,11 +16,31 @@ data. Everything is read-only except `force-start`, `kill` and `change-status` (
 - The script finds the user's API token (`asp_...`) by itself: in `AUTOSYS_PROXY_TOKEN` if set, else in the
   file `~/.autosys-proxy/token`. Do not look for, read or print the token yourself, and never ask the user to
   paste it into the chat.
-- If the script says there is no token or it got 401 (exit code 2), stop and tell the user to: log in to AutoSys
-  through the proxy, press **Copy token** on `http://localhost:8080/proxy/token`, and run in their own terminal
-  `powershell -NoProfile -ExecutionPolicy Bypass -File <skill-dir>/autosys.ps1 set-token` (it saves the token
-  from the clipboard). Then retry. Do not run `set-token` yourself.
-- `AUTOSYS_PROXY_URL` overrides the proxy address (default `http://localhost:8080`).
+- Each proxy has its own token (saved per proxy). If the script says there is no token or it got 401 (exit
+  code 2), stop and pass on its message: log in to AutoSys through that proxy, press **Copy token** on
+  `<proxy URL>/proxy/token`, and run in their own terminal
+  `powershell -NoProfile -ExecutionPolicy Bypass -File <skill-dir>/autosys.ps1 set-token` (add the same
+  `-Proxy NAME` if one was used; it saves the token from the clipboard). Then retry. Do not run `set-token`
+  yourself.
+
+## Choosing the proxy
+
+The script talks to one proxy per call, chosen by: `-Proxy NAME|URL` on the call, else the environment variable
+`AUTOSYS_PROXY_URL`, else the current proxy saved with `proxy-use`, else `http://localhost:8080`.
+
+| User says | Command |
+|---|---|
+| "which proxies are there", "which proxy am I using" | `proxy-list` (shows `using`, the saved names, and whether each has a token) |
+| "add the UAT proxy at https://host:8443" | `proxy-add uat https://host:8443` |
+| "switch to UAT", "use the local proxy from now on" | `proxy-use uat` (or a URL) |
+| "check JOB on UAT" (just this once) | add `-Proxy uat` to that command, e.g. `status JOB -Proxy uat` |
+
+- When the user names a proxy or environment for a question, pass `-Proxy` on every call of that answer
+  (including traversals) instead of switching the saved one; switch with `proxy-use` only when asked to.
+- If unsure which proxy a name means, run `proxy-list` rather than guessing; say which proxy (`using`) answered
+  when more than one is saved.
+- For actions (force start, kill, change status), name the proxy in the confirmation question ("Force start
+  TEST_JOB on uat now?").
 
 ## How to call it
 
@@ -56,7 +77,7 @@ tell the user and offer to go deeper instead of silently raising the limits a lo
 Without the script (e.g. no PowerShell), call the API directly; on Windows use `curl.exe`, not the `curl` alias:
 
 ```
-curl.exe -s -H "Authorization: Bearer %AUTOSYS_PROXY_TOKEN%" http://localhost:8080/api/v1/jobs/JOB/dependencies
+curl.exe -s -H "Authorization: Bearer %AUTOSYS_PROXY_TOKEN%" <proxy URL>/api/v1/jobs/JOB/dependencies
 ```
 
 Endpoints: `GET /api/v1/jobs/{name}`, `/{name}/status`, `/{name}/dependencies`, `/{name}/runs`,
@@ -157,10 +178,11 @@ The API returns `application/problem+json` with `type` and `detail`:
 | 429 `rate-limited` | Too many actions in a minute: wait, do not loop. |
 | 403 `actions-disabled` | Actions are switched off on this proxy. |
 | 409 `autosys-login-rejected` | AutoSys rejected the stored password (e.g. it was changed): tell the user to log in to AutoSys through the proxy again and set the new token. Do not retry. |
-| 502 `autosys-quickview` | The proxy could not open Quick View: open Quick View in the browser through the proxy (`http://localhost:8080`), then retry. |
+| 502 `autosys-quickview` | The proxy could not open Quick View: open Quick View in the browser through the proxy (its URL), then retry. |
 | 502 `autosys-session`, `autosys-unreachable`, `autosys-unavailable`, `autosys-login` | AutoSys did not answer as expected: retry once; if it fails again, show the `detail` to the user. |
 
-If the proxy is not reachable at all, tell the user to start it (`./gradlew bootRun` in the proxy project).
+If the proxy is not reachable at all, say which URL was tried; for a local one tell the user to start it
+(`./gradlew bootRun` in the proxy project), for another, check the URL with `proxy-list`.
 
 ## Limits
 

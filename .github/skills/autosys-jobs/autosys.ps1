@@ -9,12 +9,25 @@
     change-status sends CHANGE_STATUS with -Status for one job (only after the user has confirmed it).
     kill sends KILLJOB for one running job (only after the user has confirmed it).
 
-    The API token (asp_..., from http://localhost:8080/proxy/token) is read from
-      AUTOSYS_PROXY_TOKEN       environment variable, if set, else
-      ~/.autosys-proxy/token    saved by "autosys.ps1 set-token" (other file: AUTOSYS_PROXY_TOKEN_FILE)
-    AUTOSYS_PROXY_URL is the proxy base URL, default http://localhost:8080.
+    The proxy is chosen by, in this order:
+      -Proxy NAME|URL           for this call only
+      AUTOSYS_PROXY_URL         environment variable (a URL or a saved name)
+      the current proxy         set with "autosys.ps1 proxy-use NAME|URL"
+      http://localhost:8080     otherwise
+    Names are saved with "autosys.ps1 proxy-add NAME URL" in ~/.autosys-proxy/proxies.json;
+    "autosys.ps1 proxy-list" shows them.
+
+    The API token (asp_..., from <proxy>/proxy/token) belongs to one proxy and is read from
+      AUTOSYS_PROXY_TOKEN       environment variable, if set (used for whichever proxy is chosen), else
+      a file per proxy          saved by "autosys.ps1 set-token": ~/.autosys-proxy/token for
+                                http://localhost:8080, ~/.autosys-proxy/token-<scheme>-<host>-<port> for others
+                                (one fixed file instead: AUTOSYS_PROXY_TOKEN_FILE)
 
 .EXAMPLE
+    powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 proxy-add uat https://aproxy-uat.example:8443
+    powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 proxy-use uat
+    powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 proxy-list
+    powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 status MY_JOB -Proxy local
     powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 set-token     # token from the clipboard
     powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 deps MY_JOB
     powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 downstream MY_JOB -Depth 3
@@ -26,11 +39,18 @@
 param(
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateSet('set-token', 'session', 'job', 'status', 'deps', 'runs', 'jobs', 'search', 'downstream', 'upstream', 'tree',
-        'force-start', 'change-status', 'kill')]
+        'force-start', 'change-status', 'kill', 'proxy-list', 'proxy-add', 'proxy-use')]
     [string]$Command,
 
     [Parameter(Position = 1)]
     [string]$Name,
+
+    # proxy-add: the proxy's base URL
+    [Parameter(Position = 2)]
+    [string]$Url,
+
+    # the proxy to use for this call: a name saved with proxy-add, or a URL
+    [string]$Proxy,
 
     # traversals: how many levels to follow
     [int]$Depth = 5,
@@ -47,13 +67,95 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$base = if ($env:AUTOSYS_PROXY_URL) { $env:AUTOSYS_PROXY_URL.TrimEnd('/') } else { 'http://localhost:8080' }
-$tokenFile = if ($env:AUTOSYS_PROXY_TOKEN_FILE) { $env:AUTOSYS_PROXY_TOKEN_FILE } else { Join-Path (Join-Path $HOME '.autosys-proxy') 'token' }
-$howToSetToken = "Log in to AutoSys through the proxy, press 'Copy token' on $base/proxy/token, then run: autosys.ps1 set-token"
+$defaultUrl = 'http://localhost:8080'
+$configDir = Join-Path $HOME '.autosys-proxy'
+$proxiesFile = Join-Path $configDir 'proxies.json'
 
 function Fail([string]$message) {
     [Console]::Error.WriteLine($message)
     exit 2
+}
+
+# ~/.autosys-proxy/proxies.json: { "current": "<name or URL>", "proxies": { "<name>": "<URL>" } }
+function Read-Proxies {
+    $cfg = [ordered]@{ current = $null; proxies = [ordered]@{} }
+    if (Test-Path -LiteralPath $proxiesFile) {
+        try { $json = Get-Content -LiteralPath $proxiesFile -Raw | ConvertFrom-Json } catch { Fail "Cannot read ${proxiesFile}: $($_.Exception.Message)" }
+        if ($json.current) { $cfg.current = [string]$json.current }
+        if ($json.proxies) {
+            foreach ($p in $json.proxies.PSObject.Properties) { $cfg.proxies[$p.Name] = ([string]$p.Value).TrimEnd('/') }
+        }
+    }
+    return $cfg
+}
+
+function Save-Proxies($cfg) {
+    if (-not (Test-Path -LiteralPath $configDir)) { New-Item -ItemType Directory -Path $configDir | Out-Null }
+    $cfg | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $proxiesFile -Encoding UTF8
+}
+
+function Is-Url([string]$value) { return $value -match '^https?://[^/\s]+' }
+
+# a saved name or a URL -> the proxy's base URL
+function Resolve-Proxy([string]$value) {
+    if (Is-Url $value) { return $value.TrimEnd('/') }
+    foreach ($key in $proxyCfg.proxies.Keys) {
+        if ($key -eq $value) { return $proxyCfg.proxies[$key] }
+    }
+    $known = if ($proxyCfg.proxies.Count) { ($proxyCfg.proxies.Keys -join ', ') } else { 'none' }
+    Fail "Unknown proxy '$value' (saved: $known). Add it with: autosys.ps1 proxy-add $value <URL>"
+}
+
+# tokens are per proxy, so a token is never sent to another proxy than the one that issued it
+function Token-File([string]$url) {
+    if ($env:AUTOSYS_PROXY_TOKEN_FILE) { return $env:AUTOSYS_PROXY_TOKEN_FILE }
+    if ($url -eq $defaultUrl) { return Join-Path $configDir 'token' }
+    $u = [uri]$url
+    $key = ($u.Scheme + '-' + $u.Host + '-' + $u.Port + $u.AbsolutePath.TrimEnd('/')) -replace '[^A-Za-z0-9._-]', '_'
+    return Join-Path $configDir "token-$key"
+}
+
+$proxyCfg = Read-Proxies
+$base = $defaultUrl
+if ($Proxy) { $base = Resolve-Proxy $Proxy }
+elseif ($env:AUTOSYS_PROXY_URL) { $base = Resolve-Proxy $env:AUTOSYS_PROXY_URL }
+elseif ($proxyCfg.current) { $base = Resolve-Proxy $proxyCfg.current }
+$tokenFile = Token-File $base
+$proxyHint = if ($Proxy) { " -Proxy $Proxy" } else { '' }
+$howToSetToken = "Log in to AutoSys through the proxy, press 'Copy token' on $base/proxy/token, then run: autosys.ps1 set-token$proxyHint"
+
+# proxy settings need no token
+switch ($Command) {
+    'proxy-list' {
+        $names = foreach ($key in $proxyCfg.proxies.Keys) {
+            $url = $proxyCfg.proxies[$key]
+            [ordered]@{ name = $key; url = $url; current = ($url -eq $base); hasToken = (Test-Path -LiteralPath (Token-File $url)) }
+        }
+        [ordered]@{ using = $base; hasToken = (Test-Path -LiteralPath $tokenFile); proxies = @($names) } | ConvertTo-Json -Depth 5
+        exit 0
+    }
+    'proxy-add' {
+        if (-not $Name -or -not $Url) { Fail 'Usage: autosys.ps1 proxy-add NAME URL' }
+        if ($Name -notmatch '^[A-Za-z0-9_.-]+$') { Fail "Proxy name '$Name' may only contain letters, digits, _ . -" }
+        if (-not (Is-Url $Url)) { Fail "'$Url' is not an http(s) URL" }
+        foreach ($key in @($proxyCfg.proxies.Keys)) { if ($key -eq $Name) { $proxyCfg.proxies.Remove($key) } }
+        $proxyCfg.proxies[$Name] = $Url.TrimEnd('/')
+        Save-Proxies $proxyCfg
+        Write-Output "Saved proxy '$Name' = $($Url.TrimEnd('/')). Switch to it with: autosys.ps1 proxy-use $Name"
+        exit 0
+    }
+    'proxy-use' {
+        if (-not $Name) { Fail 'Usage: autosys.ps1 proxy-use NAME|URL' }
+        $url = Resolve-Proxy $Name
+        $proxyCfg.current = $Name
+        Save-Proxies $proxyCfg
+        Write-Output "Now using $Name ($url)."
+        if (-not (Test-Path -LiteralPath (Token-File $url)) -and -not $env:AUTOSYS_PROXY_TOKEN) {
+            Write-Output "No token saved for it yet: log in to AutoSys through it, press 'Copy token' on $url/proxy/token, then run: autosys.ps1 set-token"
+        }
+        if ($env:AUTOSYS_PROXY_URL) { Write-Output "Note: AUTOSYS_PROXY_URL is set in this terminal and takes precedence." }
+        exit 0
+    }
 }
 
 if ($Command -eq 'set-token') {
@@ -174,7 +276,7 @@ switch ($Command) {
         if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
         Set-Content -LiteralPath $tokenFile -Value $token -NoNewline -Encoding Ascii
         if ($IsLinux -or $IsMacOS) { chmod 600 $tokenFile }
-        Write-Output "Token saved to $tokenFile for user '$($r.body.username)' (valid until $($r.body.expiresAt) if unused, at most until $($r.body.absoluteExpiresAt))."
+        Write-Output "Token for $base saved to $tokenFile for user '$($r.body.username)' (valid until $($r.body.expiresAt) if unused, at most until $($r.body.absoluteExpiresAt))."
         if ($env:AUTOSYS_PROXY_TOKEN) { Write-Output "Note: AUTOSYS_PROXY_TOKEN is set in this terminal and takes precedence over the file." }
     }
     'session' { Print-Single '/api/v1/session' }
