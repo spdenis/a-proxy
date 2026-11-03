@@ -185,8 +185,29 @@ tried over and over would lock the account. Log in through the proxy again (a ne
 autosys.backend-urls=https://autosys-webui-1.example.internal:8443,https://autosys-webui-2.example.internal:8443
 ```
 
-The proxy's own logins use these URLs (default: `autosys.base-url` only), in turn. A session starts on the first one and
-stays there while it works. It moves on to the next URL, and after the last one to the first again, when:
+The list is the AutoSys servers in failover order (default: `autosys.base-url` only). The browser and the API use the
+same server: the first one at start-up, and the next one (after the last, the first again) only when the one in use is
+not usable. There is no load balancing and no switching back when an earlier server recovers: each server has its own
+AutoSys sessions, so every switch logs the users out (they log in through the proxy again, on the new server).
+
+The browser moves on when its request:
+
+- cannot reach the server (connection refused, connect timeout, unknown host): the same request, a login included,
+  is sent to the next server at once, since nothing reached AutoSys;
+- is answered with 502, 503 or 504: later requests go to the next server; a GET/HEAD is sent there at once, any other
+  request (it may have done something on AutoSys) returns the error to the browser once.
+
+A 500 or a read timeout does not switch servers. Each switch is logged at WARN: `[failover] AutoSys at <url> is not
+usable (<reason>); switching to <url>`; the ACCESS log names the server each request went to.
+
+API calls use the same server. When it goes down during an API call (no connection, or a 5xx answer to the login), the
+proxy logs in on the next server with the login it recorded from the browser, finishes the call there and stays there;
+the browser is moved there too. The API token does not change: it keeps working on the new server until it expires, is
+revoked, or AutoSys rejects the recorded password (`autosys-login-rejected`). While every server is down, calls fail with
+502 and the token stays valid; the next call after a server is back works again. An event that was already confirmed
+(Yes sent) is never sent again on another server: its result is `UNKNOWN`.
+
+The proxy's own session also moves on to the next URL, and after the last one to the first again, when:
 
 - AutoSys drops its session there;
 - the server does not answer (connection error or timeout);
@@ -199,9 +220,8 @@ last one tried. Each move is logged at INFO (`logging in again on <url>`, `AutoS
 on <url>`), and the AUDIT `BACKEND_LOGIN` line names the URL. Only a real login rejection (wrong password) stops the
 proxy's logins (`autosys-login-rejected`).
 
-The browser always goes to `autosys.base-url`, and steps 1 and 2 above (the browser's own AutoSys session) are always
-tried first, on that URL, whatever the list says. The list is only for the proxy's own login (step 3), used when the
-browser's session does not work.
+Steps 1 and 2 above (the browser's own AutoSys session) are always tried first, on the server in use; the proxy's own
+login (step 3) is used when the browser's session does not work.
 
 | Problem type | Status | Meaning |
 |---|---|---|

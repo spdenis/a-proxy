@@ -4,9 +4,11 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Locale;
 
 import com.testing.aproxy.config.AutosysProperties;
+import com.testing.aproxy.config.AutosysServers;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -28,12 +30,12 @@ import org.springframework.web.util.ContentCachingResponseWrapper;
 public class BodyUrlRewriteFilter extends OncePerRequestFilter {
 
     private final boolean enabled;
-    private final URI upstream;
+    private final List<URI> upstreams;
     private final ProxyPaths paths;
 
-    public BodyUrlRewriteFilter(AutosysProperties properties, ProxyPaths paths) {
+    public BodyUrlRewriteFilter(AutosysProperties properties, ProxyPaths paths, AutosysServers servers) {
         this.enabled = properties.proxy().rewriteBodyUrls();
-        this.upstream = properties.baseUrl();
+        this.upstreams = servers.all();
         this.paths = paths;
     }
 
@@ -52,12 +54,16 @@ public class BodyUrlRewriteFilter extends OncePerRequestFilter {
                 Charset charset = charset(caching);
                 String body = new String(caching.getContentAsByteArray(), charset);
                 String proxyBase = ProxyPaths.proxyOrigin(request) + paths.prefix();
-                String rewritten = rewrite(body, HeaderRewriter.origin(upstream), proxyBase);
                 String proxyOrigin = ProxyPaths.proxyOrigin(request);
-                if (!proxyOrigin.startsWith(upstream.getScheme() + "://")) {
-                    // With preserve-host AutoSys writes the proxy host with its own scheme, e.g. https://localhost:8080
-                    String misScheme = upstream.getScheme() + proxyOrigin.substring(proxyOrigin.indexOf("://"));
-                    rewritten = rewrite(rewritten, misScheme, proxyBase);
+                String rewritten = body;
+                // any of the servers: a page may name the one it came from
+                for (URI upstream : upstreams) {
+                    rewritten = rewrite(rewritten, HeaderRewriter.origin(upstream), proxyBase);
+                    if (!proxyOrigin.startsWith(upstream.getScheme() + "://")) {
+                        // With preserve-host AutoSys writes the proxy host with its own scheme, e.g. https://localhost:8080
+                        String misScheme = upstream.getScheme() + proxyOrigin.substring(proxyOrigin.indexOf("://"));
+                        rewritten = rewrite(rewritten, misScheme, proxyBase);
+                    }
                 }
                 if (!rewritten.equals(body)) {
                     caching.resetBuffer();

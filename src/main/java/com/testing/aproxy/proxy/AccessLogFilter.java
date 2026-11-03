@@ -1,8 +1,10 @@
 package com.testing.aproxy.proxy;
 
 import java.io.IOException;
+import java.net.URI;
 
 import com.testing.aproxy.config.AutosysProperties;
+import com.testing.aproxy.config.AutosysServers;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -28,12 +30,12 @@ public class AccessLogFilter extends OncePerRequestFilter {
 
     private final boolean enabled;
     private final ProxyPaths paths;
-    private final String upstream;
+    private final AutosysServers servers;
 
-    public AccessLogFilter(AutosysProperties properties, ProxyPaths paths) {
+    public AccessLogFilter(AutosysProperties properties, ProxyPaths paths, AutosysServers servers) {
         this.enabled = properties.proxy().accessLog();
         this.paths = paths;
-        this.upstream = HeaderRewriter.origin(properties.baseUrl());
+        this.servers = servers;
     }
 
     @Override
@@ -46,15 +48,25 @@ public class AccessLogFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         long start = System.nanoTime();
         String path = ProxyPaths.pathOf(request);
-        String target = paths.isProxied(path) ? "-> " + upstream : "(proxy)";
+        boolean proxied = paths.isProxied(path);
         try {
             chain.doFilter(request, response);
-            ACCESS.info("{} {} {} {} {} ms", request.getMethod(), path, target, response.getStatus(), millis(start));
+            ACCESS.info("{} {} {} {} {} ms", request.getMethod(), path, target(request, proxied),
+                    response.getStatus(), millis(start));
         } catch (IOException | ServletException | RuntimeException e) {
-            ACCESS.warn("{} {} {} failed after {} ms: {}", request.getMethod(), path, target, millis(start),
-                    rootMessage(e));
+            ACCESS.warn("{} {} {} failed after {} ms: {}", request.getMethod(), path, target(request, proxied),
+                    millis(start), rootMessage(e));
             throw e;
         }
+    }
+
+    /* the AutoSys server the request went to (the last one tried, after a failover) */
+    private String target(HttpServletRequest request, boolean proxied) {
+        if (!proxied) {
+            return "(proxy)";
+        }
+        Object server = request.getAttribute(ProxyRouteConfig.SERVER_ATTRIBUTE);
+        return "-> " + HeaderRewriter.origin(server instanceof URI uri ? uri : servers.current());
     }
 
     private static long millis(long start) {

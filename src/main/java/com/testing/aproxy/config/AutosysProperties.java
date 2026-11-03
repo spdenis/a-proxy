@@ -26,8 +26,8 @@ import org.springframework.validation.annotation.Validated;
 public record AutosysProperties(
         @NotNull URI baseUrl,
         /*
-         * AutoSys URLs (origins) for the proxy's own logins, in order: a session stays on one until AutoSys
-         * drops it, then logs in on the next one. Empty = base-url only. The browser always uses base-url.
+         * AutoSys URLs (origins) in failover order, for the browser and the proxy's own logins: the one in use
+         * until it is not usable, then the next one (see AutosysServers). Empty = base-url only.
          */
         @Nullable List<URI> backendUrls,
         @NotEmpty Set<String> allowedEnvironments,

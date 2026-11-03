@@ -27,8 +27,8 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
 /**
- * Several AutoSys URLs ({@code autosys.backend-urls}): the proxy's own login skips one that is
- * unreachable, and a session AutoSys drops logs in again on the next URL. The fake AutoSys is one
+ * Several AutoSys URLs ({@code autosys.backend-urls}): the proxy's own login starts on the server in
+ * use, skips one that is unreachable, and a session AutoSys drops logs in again on the next URL. The fake AutoSys is one
  * server reached under two names (localhost and 127.0.0.1); the third URL has nothing listening.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -70,8 +70,11 @@ class BackendFailoverTest {
         String token = login();
 
         assertThat(status(token).statusCode()).isEqualTo(200);
-        assertThat(output.getAll()).contains("AutoSys at " + DOWN + " is not usable for 'carol'",
-                "logged in to AutoSys at " + autosys.baseUrl() + " as 'carol'");
+        // the browser's login already moved past the unreachable URL: the proxy's own login starts on the
+        // server in use, without trying the unreachable one again
+        assertThat(output.getAll()).contains("[failover] AutoSys at " + DOWN + " is not usable",
+                "logged in to AutoSys at " + autosys.baseUrl() + " as 'carol'")
+                .doesNotContain("AutoSys at " + DOWN + " is not usable for 'carol'");
 
         // AutoSys drops the session once: the next login goes to the next URL, with the same token
         autosys.stubFor(post(urlEqualTo(QuickViewApiTest.SEARCH)).atPriority(1).inScenario("drop")

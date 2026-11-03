@@ -21,6 +21,7 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.testing.aproxy.audit.AuditLogger;
 import com.testing.aproxy.capture.Redactor;
 import com.testing.aproxy.config.AutosysProperties;
+import com.testing.aproxy.config.AutosysServers;
 import com.testing.aproxy.proxy.LoginClassifier;
 import com.testing.aproxy.session.BrowserPage;
 import com.testing.aproxy.session.CredentialVault;
@@ -73,8 +74,8 @@ public class QuickViewClient {
     private final CredentialVault vault;
     private final LoginClassifier classifier;
     private final AuditLogger audit;
-    /* the browser's AutoSys (its cookies and pages are valid there), and the URLs for the proxy's own logins */
-    private final URI browserBase;
+    /* the server in use (the browser's cookies and pages are valid there), and all URLs for the proxy's own logins */
+    private final AutosysServers servers;
     private final List<URI> bases;
     private final AutosysProperties.Login login;
     private final AutosysProperties.Quickview quickview;
@@ -82,13 +83,13 @@ public class QuickViewClient {
     private final Cache<ProxySession, State> states;
 
     public QuickViewClient(CloseableHttpClient autosysHttpClient, CredentialVault vault, LoginClassifier classifier,
-            AuditLogger audit, AutosysProperties properties) {
+            AuditLogger audit, AutosysProperties properties, AutosysServers servers) {
         this.http = autosysHttpClient;
         this.vault = vault;
         this.classifier = classifier;
         this.audit = audit;
-        this.browserBase = properties.baseUrl();
-        this.bases = properties.backendUrls();
+        this.servers = servers;
+        this.bases = servers.all();
         this.login = properties.webui().login();
         this.quickview = properties.webui().quickview();
         this.startPage = properties.proxy().startPage();
@@ -122,8 +123,9 @@ public class QuickViewClient {
         /* label of the server chosen last; kept when the page is opened again, so the choice stays */
         @Nullable String serverLabel;
 
-        State(URI base) {
+        State(URI base, int baseIndex) {
             this.base = base;
+            this.baseIndex = baseIndex;
         }
 
         void reset() {
@@ -765,7 +767,7 @@ public class QuickViewClient {
     }
 
     private State state(ProxySession session) {
-        State state = states.get(session, s -> new State(bases.getFirst()));
+        State state = states.get(session, s -> new State(servers.current(), servers.currentIndex()));
         state.userAgent = session.browserUserAgent();
         return state;
     }
@@ -779,6 +781,7 @@ public class QuickViewClient {
                 open(session, state);
             }
             String problem;
+            boolean down = false;
             Exchange response = null;
             String serverValue = serverValue(session, state, wanted);
             try {
@@ -804,6 +807,7 @@ public class QuickViewClient {
                     throw e;
                 }
                 problem = e.getMessage();
+                down = true;
             }
             if (problem == null) {
                 return response.body();
@@ -813,7 +817,14 @@ public class QuickViewClient {
                 state.failedPage = state.usedPage;
             }
             boolean own = !state.borrowed;
+            URI failed = state.base;
             state.reset();
+            if (down) {
+                // the server is down: log in (with the stored login, same token) where the browser goes now
+                log.info("[backend] AutoSys at {} is not reachable for '{}' ({}); logging in again on {}", failed,
+                        session.username(), problem, moveOn(state, failed, problem));
+                continue;
+            }
             // the proxy's own AutoSys session was dropped: the next login goes to the next URL
             String next = own ? nextBase(state) : null;
             log.info("[backend] Quick View session of '{}' is no longer valid ({}); logging in again{}",
@@ -821,6 +832,21 @@ public class QuickViewClient {
         }
         throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-session",
                 "AutoSys Quick View did not accept the request: " + lastProblem);
+    }
+
+    /**
+     * A server is not usable: the browser moves on too ({@link AutosysServers#failed}), and the session goes
+     * to the server now in use, else (this server was not the one in use) to the next URL. Returns where.
+     */
+    private String moveOn(State state, URI failed, String reason) {
+        URI current = servers.failed(failed, reason);
+        if (current.equals(failed)) {
+            String next = nextBase(state);
+            return next == null ? failed.toString() : next;
+        }
+        state.baseIndex = bases.indexOf(current);
+        state.base = current;
+        return current.toString();
     }
 
     /** Moves the session to the next configured AutoSys URL; returns it, or null when there is only one. */
@@ -860,7 +886,7 @@ public class QuickViewClient {
         }
         cookies.forEach(state.cookies::putBrowser);
         // the browser's page and cookies are valid only on the browser's AutoSys
-        state.base = browserBase;
+        state.base = servers.current();
         state.form = new HtmlForms.Form(page.action(), page.fields());
         state.pageUrl = state.base.resolve(page.pageUrl() != null ? page.pageUrl() : page.action()).toString();
         state.loggedIn = true;
@@ -879,7 +905,7 @@ public class QuickViewClient {
         boolean borrowed = false;
         // tried on every opening: the browser's cookies change as the user moves around the UI
         if (!state.loggedIn && quickview.reuseBrowserSession()) {
-            state.base = browserBase;
+            state.base = servers.current();
             state.cookies.store(login.path(), session.autosysCookies());
             session.browserCookies().forEach((name, values) -> {
                 if (quickview.excludeBrowserCookies().stream().noneMatch(name::equalsIgnoreCase)) {
@@ -898,6 +924,7 @@ public class QuickViewClient {
         Landing page = null;
         if (state.loggedIn) {
             String failure;
+            boolean down = false;
             try {
                 page = get(state, entryUri(session, state), state.base.resolve(quickview.entryReferer()).toString());
                 failure = quickViewForm(page) != null ? null : "ended at " + page.uri().getPath() + " with status "
@@ -908,14 +935,18 @@ public class QuickViewClient {
                     throw e;
                 }
                 failure = e.getMessage();
+                down = true;
             }
             if (failure != null) {
                 log.info("[backend] {} of '{}' did not open Quick View ({}); logging in as the proxy",
                         borrowed ? "the browser's AutoSys session" : "the proxy's AutoSys session on " + state.base,
                         session.username(), failure);
                 boolean own = !borrowed;
+                URI failed = state.base;
                 state.reset();
-                if (own) {
+                if (down) {
+                    moveOn(state, failed, failure);
+                } else if (own) {
                     nextBase(state);
                 }
                 borrowed = false;
@@ -979,14 +1010,19 @@ public class QuickViewClient {
                 failure = "Quick View did not open: " + page.uri().getPath() + " answered status "
                         + page.exchange().status();
             } catch (BackendException e) {
-                if (!serverDown(e) || tried >= bases.size()) {
-                    if (serverDown(e)) {
-                        state.reset();
-                        nextBase(state); // the next request starts on the next URL
-                    }
+                if (!serverDown(e)) {
                     throw e;
                 }
-                failure = e.getMessage();
+                URI failed = state.base;
+                state.reset();
+                // down for the browser too: both move on to the same server
+                String next = moveOn(state, failed, e.getMessage());
+                if (tried >= bases.size()) {
+                    throw e; // the next request starts there
+                }
+                log.info("[backend] AutoSys at {} is not usable for '{}' ({}); logging in on {}", failed,
+                        session.username(), e.getMessage(), next);
+                continue;
             }
             URI failed = state.base;
             state.reset();

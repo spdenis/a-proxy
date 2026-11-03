@@ -20,8 +20,8 @@ spring:
   # spring.cloud.gateway.server.webmvc.trusted-proxies is set.
 
 autosys:
-  base-url: https://autosys-webui.example.internal:8443   # origin only (no path)
-  # backend-urls:                 # the proxy's own logins: one URL per session, the next when AutoSys drops it
+  base-url: https://autosys-webui.example.internal:8443   # origin only (no path); the only server unless backend-urls is set
+  # backend-urls:                 # several servers, failover order (browser and API): the next one only when the one in use is down
   #   - https://autosys-webui-1.example.internal:8443
   #   - https://autosys-webui-2.example.internal:8443
   environment: DEV

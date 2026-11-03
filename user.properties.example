@@ -3,6 +3,8 @@
 
 # --- AutoSys server (origin only, no path)
 autosys.base-url=https://your-autosys-webui-host:8443
+# Several servers: failover order; when set, it replaces base-url as the server list (see README "Several AutoSys URLs")
+#autosys.backend-urls=https://your-autosys-webui-1:8443,https://your-autosys-webui-2:8443
 autosys.environment=DEV
 
 # --- Proxy port
