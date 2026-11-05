@@ -41,8 +41,8 @@ public final class ProxySession {
     private volatile Instant lastUsedAt;
     private volatile @Nullable String lastJob;
     private volatile SessionState state = SessionState.ACTIVE;
-    /* set when AutoSys rejected the stored password: no more own logins, so the account is not locked */
-    private volatile @Nullable String loginRejected;
+    /* AutoSys server -> why it rejected the stored password; no more own logins there, so the account is not locked */
+    private final ConcurrentMap<java.net.URI, String> loginRejected = new ConcurrentHashMap<>();
 
     ProxySession(String username, String tokenHash, CredentialVault.SealedSecret credentials,
             @Nullable String clientIp, @Nullable LoginTemplate loginTemplate, List<String> autosysCookies, Instant now,
@@ -214,13 +214,18 @@ public final class ProxySession {
         this.browserKeyHash = hash;
     }
 
-    /** Why AutoSys rejected the proxy's login with the stored password, or null. */
-    public @Nullable String loginRejected() {
-        return loginRejected;
+    /** Why this AutoSys server rejected the proxy's login with the stored password, or null. */
+    public @Nullable String loginRejected(java.net.URI server) {
+        return loginRejected.get(server);
     }
 
-    public void loginRejected(String reason) {
-        this.loginRejected = reason;
+    public void loginRejected(java.net.URI server, String reason) {
+        loginRejected.put(server, reason);
+    }
+
+    /** A login with the stored password worked: earlier refusals were the servers', not the password's. */
+    public void loginAccepted() {
+        loginRejected.clear();
     }
 
     void touch(Instant now) {

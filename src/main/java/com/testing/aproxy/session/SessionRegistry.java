@@ -39,10 +39,13 @@ public class SessionRegistry {
     private final Duration absoluteTtl;
     private final boolean bindClientIp;
     private final boolean browserUseCounts;
+    private final boolean keepOnRelogin;
     private final Cache<String, ProxySession> sessions;
     /* token hash -> why its session ended, to answer a 401 with the reason; tokens themselves are not kept */
     private final Cache<String, Closed> closed;
     private final ConcurrentMap<String, String> tokenHashByUser = new ConcurrentHashMap<>();
+    /* hash of an earlier token of the user -> hash of the token of the user's session now (keep-on-relogin) */
+    private final ConcurrentMap<String, String> aliases = new ConcurrentHashMap<>();
     /* hash of the ASP_SID browser cookie -> token hash */
     private final ConcurrentMap<String, String> tokenHashByBrowserKey = new ConcurrentHashMap<>();
     private volatile boolean shuttingDown;
@@ -57,6 +60,7 @@ public class SessionRegistry {
         this.absoluteTtl = properties.session().absoluteTtl();
         this.bindClientIp = properties.token().bindClientIp();
         this.browserUseCounts = properties.session().browserUseCounts();
+        this.keepOnRelogin = properties.token().keepOnRelogin();
         this.closed = Caffeine.newBuilder()
                 .expireAfterWrite(absoluteTtl.isZero() ? Duration.ofDays(7) : absoluteTtl.multipliedBy(2))
                 .maximumSize(10_000).build();
@@ -71,7 +75,8 @@ public class SessionRegistry {
 
     /**
      * Creates a session for a freshly captured login and returns the raw token. Any previous
-     * session of the same user is closed. The caller must wipe {@code password} afterwards.
+     * session of the same user is closed; its token keeps working for the new session when
+     * {@code autosys.token.keep-on-relogin} is on. The caller must wipe {@code password} afterwards.
      */
     public IssuedSession create(String username, char[] password, @Nullable String clientIp) {
         return create(username, password, clientIp, null, List.of());
@@ -91,7 +96,14 @@ public class SessionRegistry {
         String previous = tokenHashByUser.put(username, tokenHash);
         sessions.put(tokenHash, session);
         if (previous != null) {
-            closed.put(previous, new Closed(username, Reason.REPLACED, now));
+            ProxySession old = sessions.policy().getIfPresentQuietly(previous);
+            if (keepOnRelogin && old != null && old.state() != SessionState.CLOSED) {
+                // e.g. the browser had to log in again after AutoSys dropped its session: scripts keep their token
+                aliases.replaceAll((from, to) -> to.equals(previous) ? tokenHash : to);
+                aliases.put(previous, tokenHash);
+            } else {
+                closed.put(previous, new Closed(username, Reason.REPLACED, now));
+            }
             sessions.invalidate(previous);
         }
         return new IssuedSession(token, browserKey, session);
@@ -102,7 +114,7 @@ public class SessionRegistry {
         if (!TokenService.looksLikeToken(token)) {
             return Optional.empty();
         }
-        ProxySession session = sessions.getIfPresent(TokenService.hash(token));
+        ProxySession session = sessions.getIfPresent(current(TokenService.hash(token)));
         if (session == null || session.state() == SessionState.CLOSED) {
             return Optional.empty();
         }
@@ -137,7 +149,7 @@ public class SessionRegistry {
         }
         String tokenHash = TokenService.hash(token);
         sessions.cleanUp(); // records the reason of a session that has just expired
-        ProxySession open = sessions.policy().getIfPresentQuietly(tokenHash);
+        ProxySession open = sessions.policy().getIfPresentQuietly(current(tokenHash));
         if (open != null && open.state() != SessionState.CLOSED) {
             return "The API token is valid, but not from this client address (autosys.token.bind-client-ip)";
         }
@@ -163,7 +175,12 @@ public class SessionRegistry {
 
     /** Looks up a session by token without refreshing it (e.g. for the token page). */
     public Optional<ProxySession> peek(String token) {
-        return Optional.ofNullable(sessions.policy().getIfPresentQuietly(TokenService.hash(token)));
+        return Optional.ofNullable(sessions.policy().getIfPresentQuietly(current(TokenService.hash(token))));
+    }
+
+    /** The hash the session of this token is kept under: its own, or that of the user's newer login. */
+    private String current(String tokenHash) {
+        return aliases.getOrDefault(tokenHash, tokenHash);
     }
 
     /** When the session expires unless it is used again; null = never (no idle and no absolute expiry). */
@@ -216,7 +233,16 @@ public class SessionRegistry {
             default -> clock.instant();
         };
         // a replaced session has its reason already
-        closed.asMap().putIfAbsent(session.tokenHash(), new Closed(session.username(), reason, at));
+        Closed why = new Closed(session.username(), reason, at);
+        closed.asMap().putIfAbsent(session.tokenHash(), why);
+        // earlier tokens kept for this session end with it, for the same reason
+        aliases.entrySet().removeIf(alias -> {
+            if (alias.getValue().equals(session.tokenHash())) {
+                closed.put(alias.getKey(), why);
+                return true;
+            }
+            return false;
+        });
         audit.sessionClosed(session.username(), session.sessionId(), shuttingDown ? "SHUTDOWN" : switch (cause) {
             case EXPIRED -> "EXPIRED";
             case EXPLICIT -> "REVOKED_OR_REPLACED";

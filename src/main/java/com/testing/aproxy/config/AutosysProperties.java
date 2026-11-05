@@ -142,7 +142,13 @@ public record AutosysProperties(
             @DefaultValue("false") boolean trustAllCertificates) {
     }
 
-    public record Token(@DefaultValue("false") boolean bindClientIp) {
+    public record Token(
+            @DefaultValue("false") boolean bindClientIp,
+            /*
+             * A new login of the same user through the proxy keeps the earlier token working (as well as the new
+             * one), so scripts go on after the browser had to log in again; false = the new login replaces it.
+             */
+            @DefaultValue("true") boolean keepOnRelogin) {
     }
 
     public record Webui(@Valid @DefaultValue Login login, @Valid @DefaultValue Quickview quickview) {

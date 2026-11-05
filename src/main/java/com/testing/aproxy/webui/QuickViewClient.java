@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -68,6 +69,8 @@ public class QuickViewClient {
     private static final String UNREACHABLE = "autosys-unreachable";
     /* the server answered, but with a server error (e.g. 503 while AutoSys or its load balancer is down) */
     private static final String UNAVAILABLE = "autosys-unavailable";
+    /* this server rejected the stored password, another one has not tried it yet */
+    private static final String REJECTED_HERE = "autosys-login-rejected-here";
     private static final Redactor MASK = new Redactor(List.of());
 
     private final CloseableHttpClient http;
@@ -1041,6 +1044,17 @@ public class QuickViewClient {
                 failure = "Quick View did not open: " + page.uri().getPath() + " answered status "
                         + page.exchange().status();
             } catch (BackendException e) {
+                if (e.type().equals(REJECTED_HERE)) {
+                    // only the proxy's login moves on: the browser's session on that server is not affected
+                    URI failed = state.base;
+                    state.reset();
+                    String next = nextBase(state);
+                    if (tried >= bases.size()) {
+                        throw e;
+                    }
+                    log.info("[backend] logging in as '{}' on {} instead of {}", session.username(), next, failed);
+                    continue;
+                }
                 if (!serverDown(e)) {
                     throw e;
                 }
@@ -1063,10 +1077,18 @@ public class QuickViewClient {
     }
 
     private void login(ProxySession session, State state) {
-        if (session.loginRejected() != null) {
-            throw new BackendException(HttpStatus.CONFLICT, "autosys-login-rejected", "AutoSys rejected the stored "
-                    + "password of '" + session.username() + "' (" + session.loginRejected() + "); the proxy does "
-                    + "not try it again, so the account is not locked. Log in to AutoSys through the proxy again");
+        if (session.loginRejected(state.base) != null) {
+            URI other = notRejected(session, state.baseIndex);
+            if (other == null) {
+                throw new BackendException(HttpStatus.CONFLICT, "autosys-login-rejected", "AutoSys rejected the "
+                        + "stored password of '" + session.username() + "' on every server (" + rejections(session)
+                        + "); the proxy does not try it again, so the account is not locked. Log in to AutoSys "
+                        + "through the proxy again");
+            }
+            log.info("[backend] AutoSys at {} rejected the stored login of '{}' before ({}); logging in on {}",
+                    state.base, session.username(), session.loginRejected(state.base), other);
+            state.baseIndex = bases.indexOf(other);
+            state.base = other;
         }
         LoginTemplate template = session.loginTemplate();
         if (template == null) {
@@ -1101,14 +1123,18 @@ public class QuickViewClient {
         audit.backendLogin(session.username(), session.sessionId(), result.success(),
                 result.reason() + " on " + state.base);
         if (!result.success()) {
-            session.loginRejected(result.reason() + " on " + state.base);
+            session.loginRejected(state.base, result.reason());
             log.warn("[backend] AutoSys rejected the proxy's login for '{}': {}; response {} {}, cookies {}, "
                     + "body: {}; sent headers {}", session.username(), result.reason(), response.status(),
                     response.contentType(), response.setCookies().stream().map(c -> c.split("=", 2)[0]).toList(),
                     snippet(response.body()), Arrays.stream(post.getHeaders()).map(Header::getName).toList());
-            throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-login",
-                    "AutoSys rejected the proxy's login for '" + session.username() + "': " + result.reason());
+            // a server going down can refuse a good password: the other servers are tried once each
+            throw new BackendException(HttpStatus.BAD_GATEWAY,
+                    notRejected(session, state.baseIndex) != null ? REJECTED_HERE : "autosys-login",
+                    "AutoSys at " + state.base + " rejected the proxy's login for '" + session.username() + "': "
+                            + result.reason());
         }
+        session.loginAccepted();
         if (response.location() != null) {
             get(state, uri.resolve(response.location()));
         }
@@ -1120,6 +1146,21 @@ public class QuickViewClient {
                     + "in JavaScript, which the proxy's own login cannot do. Use the API after browsing AutoSys "
                     + "through the proxy, so the proxy sees the browser's cookies.");
         }
+    }
+
+    /** The first server after this index that has not rejected the stored password, or null. */
+    private @Nullable URI notRejected(ProxySession session, int index) {
+        for (int i = 1; i <= bases.size(); i++) {
+            URI base = bases.get((index + i) % bases.size());
+            if (session.loginRejected(base) == null) {
+                return base;
+            }
+        }
+        return null;
+    }
+
+    private String rejections(ProxySession session) {
+        return bases.stream().map(b -> b + ": " + session.loginRejected(b)).collect(Collectors.joining(", "));
     }
 
     private Exchange postSearch(State state, String jobName, @Nullable String serverValue) {

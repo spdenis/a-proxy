@@ -33,7 +33,7 @@ autosys:
     access-log: true          # one log line per request (ACCESS logger)
     start-page:               # e.g. /ui/Login.html: where http://proxy/ sends the browser; empty = forward "/"
   session:
-    idle-ttl: 0                   # 0 = never; the token lasts until a new login through the proxy or a revoke
+    idle-ttl: 0                   # 0 = never; the token lasts until a revoke or a proxy restart
     absolute-ttl: 0
     token-page-ttl: 5m
     browser-use-counts: true      # the browser using AutoSys through the proxy keeps the token from going idle
@@ -46,6 +46,7 @@ autosys:
     trust-all-certificates: false   # true = do not check the AutoSys server certificate (test servers only)
   token:
     bind-client-ip: false
+    keep-on-relogin: true         # logging in again keeps the earlier token working; false = the new login replaces it
   webui:
     login:
       path: /CHANGE-ME/login        # AutoSys-relative path of the login form submit (Ant pattern)

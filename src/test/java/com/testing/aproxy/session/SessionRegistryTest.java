@@ -65,8 +65,43 @@ class SessionRegistryTest {
         clock.advance(Duration.ofDays(30));
         assertThat(forever.idleExpiresAt(issued.session())).isNull();
         assertThat(forever.authenticate(issued.token(), null)).isPresent();
-        forever.create("alice", "pw2".toCharArray(), null);
-        assertThat(forever.authenticate(issued.token(), null)).isEmpty();
+    }
+
+    @Test
+    void aNewLoginOfTheSameUserKeepsTheEarlierTokenWorkingForTheNewSession() {
+        var first = registry.create("alice", "pw".toCharArray(), null);
+        var second = registry.create("alice", "pw2".toCharArray(), null);
+        var third = registry.create("alice", "pw3".toCharArray(), null);
+
+        assertThat(first.session().state()).isEqualTo(SessionState.CLOSED);
+        assertThat(first.session().credentials().isWiped()).isTrue();
+        for (var token : new String[] {first.token(), second.token(), third.token()}) {
+            ProxySession session = registry.authenticate(token, null).orElseThrow();
+            assertThat(session).isSameAs(third.session());
+            String password = vault.withPassword(session.credentials(), String::new);
+            assertThat(password).isEqualTo("pw3");
+        }
+        assertThat(registry.peek(first.token())).containsSame(third.session());
+
+        // the tokens end with the session, for its reason
+        registry.revoke(third.session());
+        assertThat(registry.authenticate(first.token(), null)).isEmpty();
+        assertThat(registry.whyRejected(first.token())).contains("revoked");
+        assertThat(registry.whyRejected(second.token())).contains("revoked");
+        // and a later login does not bring them back
+        registry.create("alice", "pw4".toCharArray(), null);
+        assertThat(registry.authenticate(first.token(), null)).isEmpty();
+    }
+
+    @Test
+    void withoutKeepOnReloginTheNewLoginReplacesTheToken() {
+        var replacing = new SessionRegistry(properties(Duration.ZERO, Duration.ZERO, false), vault,
+                new TokenService(), new AuditLogger(), clock);
+        var issued = replacing.create("alice", "pw".toCharArray(), null);
+        replacing.create("alice", "pw2".toCharArray(), null);
+
+        assertThat(replacing.authenticate(issued.token(), null)).isEmpty();
+        assertThat(replacing.whyRejected(issued.token())).contains("replaced at 2026-10-23", "'alice'");
     }
 
     @Test
@@ -82,12 +117,9 @@ class SessionRegistryTest {
     @Test
     void rejectedTokensSayWhy() {
         var idle = registry.create("alice", "pw".toCharArray(), null);
-        var replaced = registry.create("bob", "pw".toCharArray(), null);
-        registry.create("bob", "pw2".toCharArray(), null);
         var revoked = registry.create("carol", "pw".toCharArray(), null);
         registry.revoke(revoked.session());
 
-        assertThat(registry.whyRejected(replaced.token())).contains("replaced at 2026-10-23", "'bob'");
         assertThat(registry.whyRejected(revoked.token())).contains("revoked");
         assertThat(registry.whyRejected("asp_unknownunknownunknownunknown")).contains("restarted");
         assertThat(registry.whyRejected("nope")).contains("not an API token");
@@ -112,9 +144,10 @@ class SessionRegistryTest {
         var first = registry.create("alice", "pw".toCharArray(), null);
         var second = registry.create("alice", "pw2".toCharArray(), null);
 
-        assertThat(registry.authenticate(first.token(), null)).isEmpty();
+        // the earlier token goes on with the new session (keep-on-relogin)
+        assertThat(registry.authenticate(first.token(), null)).containsSame(second.session());
         assertThat(first.session().credentials().isWiped()).isTrue();
-        assertThat(registry.authenticate(second.token(), null)).isPresent();
+        assertThat(registry.authenticate(second.token(), null)).containsSame(second.session());
     }
 
     @Test
@@ -144,17 +177,21 @@ class SessionRegistryTest {
     }
 
     static AutosysProperties properties(Duration idle, Duration absolute) {
+        return properties(idle, absolute, true);
+    }
+
+    static AutosysProperties properties(Duration idle, Duration absolute, boolean keepOnRelogin) {
         return new AutosysProperties(URI.create("https://autosys.example.internal"), null, Set.of("DEV"), "DEV",
                 new AutosysProperties.Proxy("", false, true, true, null),
                 new AutosysProperties.Session(idle, absolute, Duration.ofMinutes(5), true),
-                null, new AutosysProperties.Token(false), null, null, null, null);
+                null, new AutosysProperties.Token(false, keepOnRelogin), null, null, null, null);
     }
 
     static AutosysProperties propertiesWithIpBinding() {
         return new AutosysProperties(URI.create("https://autosys.example.internal"), null, Set.of("DEV"), "DEV",
                 new AutosysProperties.Proxy("", false, true, true, null),
                 new AutosysProperties.Session(Duration.ofHours(8), Duration.ofHours(24), Duration.ofMinutes(5), true),
-                null, new AutosysProperties.Token(true), null, null, null, null);
+                null, new AutosysProperties.Token(true, true), null, null, null, null);
     }
 
     static final class MutableClock extends Clock {

@@ -88,18 +88,24 @@ Until success rules are configured, logins pass through normally but no token is
 2. The browser goes to <http://localhost:8080/proxy/token> on its own if the login ends with a redirect,
    or if `landing-page` is set. Otherwise open that page yourself. It shows the token (`asp_...`) with a **Copy token** button and a link back to AutoSys.
 3. The page only shows the token for 5 minutes after login (`autosys.session.token-page-ttl`), and only in the
-   browser that logged in. To get a new token, log in again. That replaces the previous token.
+   browser that logged in. To get a new token, log in again.
 
-The token stays the same until you log in through the proxy again (the new login replaces it), it is revoked
-(`DELETE /api/v1/sessions/current`), or the proxy restarts (tokens are kept in memory only). When AutoSys drops its
-own session, the proxy logs in again by itself with the captured credentials (the password is kept encrypted in
-memory) and the token does not change.
+The token stays valid until it is revoked (`DELETE /api/v1/sessions/current`) or the proxy restarts (tokens are
+kept in memory only). Logging in again through the proxy as the same user gives a new token, and the earlier
+tokens keep working with the new login (`autosys.token.keep-on-relogin`, on by default; `false` = the new login
+replaces the previous token). So when the browser has to log in again, for example after a switch to another AutoSys
+server, scripts do not need a new token. When AutoSys drops its own session, the proxy logs in again by itself with
+the captured credentials (the password is kept encrypted in memory) and the token does not change.
+
+If an AutoSys server refuses that login (a server that is shutting down may answer the login with an error), the
+proxy tries the next server in `backend-urls`, once each. Only when every server has refused the password does it
+stop, so the account is not locked: the API then answers 409 until you log in through the proxy again.
 
 Optional time limits: `autosys.session.idle-ttl` (time without use) and `autosys.session.absolute-ttl` (time since
 the login); `0`, the default, means none. API calls count as use, and so does the browser using AutoSys through the
 proxy (`autosys.session.browser-use-counts`, on by default).
 
-A rejected token gets a 401 whose `detail` says why: expired (with the time), replaced by a newer login, revoked, or
+A rejected token gets a 401 whose `detail` says why: expired (with the time), replaced by a newer login (with `keep-on-relogin: false`), revoked, or
 unknown to the proxy (it was restarted). The same reason is logged at INFO (`[api] 401`). The AutoSys session in the
 browser can outlive the token: after a proxy restart, log out of AutoSys and log in again through the proxy to get a
 new token.
