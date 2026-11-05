@@ -15,6 +15,7 @@ import org.apache.hc.client5.http.ssl.DefaultClientTlsStrategy;
 import org.apache.hc.client5.http.ssl.NoopHostnameVerifier;
 import org.apache.hc.client5.http.ssl.TrustAllStrategy;
 import org.apache.hc.core5.ssl.SSLContexts;
+import org.apache.hc.core5.util.TimeValue;
 import org.apache.hc.core5.util.Timeout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,6 +46,8 @@ public class HttpClientConfig {
                 .setDefaultConnectionConfig(ConnectionConfig.custom()
                         .setConnectTimeout(Timeout.of(http.connectTimeout().toMillis(), TimeUnit.MILLISECONDS))
                         .setSocketTimeout(Timeout.of(http.readTimeout().toMillis(), TimeUnit.MILLISECONDS))
+                        // a connection AutoSys closed while idle must not look like a server that went down
+                        .setValidateAfterInactivity(TimeValue.ofSeconds(1))
                         .build())
                 .setTlsSocketStrategy(tlsStrategy(http))
                 .build();
@@ -58,6 +61,7 @@ public class HttpClientConfig {
                 .disableCookieManagement()
                 .disableContentCompression()
                 .disableAutomaticRetries()
+                .evictIdleConnections(TimeValue.ofMinutes(1))
                 .build();
     }
 

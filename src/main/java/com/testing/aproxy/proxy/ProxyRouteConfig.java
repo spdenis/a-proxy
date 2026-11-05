@@ -6,9 +6,11 @@ import static org.springframework.cloud.gateway.server.mvc.filter.BeforeFilterFu
 import static org.springframework.cloud.gateway.server.mvc.handler.GatewayRouterFunctions.route;
 import static org.springframework.cloud.gateway.server.mvc.handler.HandlerFunctions.http;
 
+import java.io.EOFException;
 import java.io.InterruptedIOException;
 import java.net.ConnectException;
 import java.net.NoRouteToHostException;
+import java.net.SocketException;
 import java.net.URI;
 import java.net.UnknownHostException;
 import java.util.List;
@@ -20,6 +22,8 @@ import com.testing.aproxy.session.PendingTokenStore;
 import jakarta.servlet.http.HttpServletRequest;
 
 import org.apache.hc.client5.http.ConnectTimeoutException;
+import org.apache.hc.core5.http.ConnectionClosedException;
+import org.apache.hc.core5.http.NoHttpResponseException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cloud.gateway.server.mvc.common.MvcUtils;
@@ -40,9 +44,11 @@ import org.springframework.web.servlet.function.ServerResponse;
  * application itself is forwarded to the AutoSys web server in use ({@link AutosysServers}).
  * <p>
  * Failover: when the server cannot be connected to, the next one becomes current and the same
- * request goes there (nothing reached AutoSys, so even a login POST is safe to send again). When it
- * answers 502/503/504, later requests go to the next server; the request itself is sent again
- * only when it has no side effects (GET, HEAD), else the browser gets the error once.
+ * request goes there (nothing reached AutoSys). When an open connection drops (reset, closed), a
+ * request that is safe to send again (GET, HEAD, the login) is tried once more on the same server, then
+ * on the next one, which becomes current; any other request returns the error, as it may have reached
+ * AutoSys. When it answers 502/503/504, later requests go to the next server; a GET or HEAD is sent
+ * there at once, any other request returns the error to the browser once.
  */
 @Configuration(proxyBeanMethods = false)
 public class ProxyRouteConfig {
@@ -83,9 +89,9 @@ public class ProxyRouteConfig {
     /** Sends the request to the server in use; on to the next ones while a server is not usable. */
     static ServerResponse forward(ServerRequest request, HandlerFunction<ServerResponse> proxy, AutosysServers servers,
             String prefix, boolean preserveHost) throws Exception {
-        int triesLeft = servers.all().size();
+        int serversLeft = servers.all().size();
+        boolean retriedHere = false;
         while (true) {
-            triesLeft--;
             URI upstream = servers.current();
             request.servletRequest().setAttribute(SERVER_ATTRIBUTE, upstream);
             ServerRequest outgoing = uri(upstream).apply(rewriteRequestHeaders(request, upstream, prefix,
@@ -94,24 +100,40 @@ public class ProxyRouteConfig {
             try {
                 response = proxy.handle(outgoing);
             } catch (Exception e) {
-                String failure = connectFailure(e);
-                if (failure == null) {
+                String connect = connectFailure(e);
+                String dropped = connect == null ? droppedConnection(e) : null;
+                if (connect == null && dropped == null) {
                     throw e;
                 }
-                URI next = servers.failed(upstream, failure);
-                if (triesLeft <= 0 || next.equals(upstream)) {
+                // a dropped connection: the request may have reached AutoSys, so only what is safe goes again
+                if (dropped != null && !resend(request)) {
+                    log.info("[failover] {} {}: connection to AutoSys at {} dropped ({}); not sent again, it may "
+                            + "have reached AutoSys", request.method(), request.path(), upstream, dropped);
                     throw e;
                 }
-                log.info("[failover] {} {}: AutoSys at {} not reachable ({}); sending it to {}", request.method(),
-                        request.path(), upstream, failure, next);
+                if (dropped != null && !retriedHere) {
+                    // once more on the same server: a pooled connection it had closed also ends like this
+                    retriedHere = true;
+                    log.info("[failover] {} {}: connection to AutoSys at {} dropped ({}); trying it once more",
+                            request.method(), request.path(), upstream, dropped);
+                    continue;
+                }
+                URI next = servers.failed(upstream, connect != null ? connect : dropped);
+                if (--serversLeft <= 0 || next.equals(upstream)) {
+                    throw e;
+                }
+                retriedHere = false;
+                log.info("[failover] {} {}: AutoSys at {} not usable ({}); sending it to {}", request.method(),
+                        request.path(), upstream, connect != null ? connect : dropped, next);
                 continue;
             }
             int status = response.statusCode().value();
             if (UNAVAILABLE.contains(status)) {
                 URI next = servers.failed(upstream, "answered " + status + " to " + request.method() + " "
                         + request.path());
-                if (triesLeft > 0 && !next.equals(upstream) && SAFE_TO_REPEAT.contains(request.method())) {
+                if (--serversLeft > 0 && !next.equals(upstream) && SAFE_TO_REPEAT.contains(request.method())) {
                     discard(outgoing);
+                    retriedHere = false;
                     log.info("[failover] {} {}: AutoSys at {} answered {}; sending it to {}", request.method(),
                             request.path(), upstream, status, next);
                     continue;
@@ -122,20 +144,54 @@ public class ProxyRouteConfig {
     }
 
     /**
+     * Whether the request can be sent again after its connection dropped: it has no side effects, or it
+     * is the login (its body is kept by {@link ResendableBodyFilter}), which is rewound for the next send.
+     */
+    private static boolean resend(ServerRequest request) throws java.io.IOException {
+        if (SAFE_TO_REPEAT.contains(request.method())) {
+            return true;
+        }
+        ResendableBodyFilter.Resendable login = ResendableBodyFilter.find(request.servletRequest());
+        if (login == null) {
+            return false;
+        }
+        login.rewind();
+        return true;
+    }
+
+    /**
      * Why the connection to AutoSys could not be made, or null when the failure came later (then the
-     * request may have reached AutoSys and must not be sent again).
+     * request may have reached AutoSys).
      */
     static String connectFailure(Throwable e) {
         for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
             if (t instanceof ConnectException || t instanceof NoRouteToHostException
                     || t instanceof UnknownHostException || t instanceof ConnectTimeoutException) {
-                return t.getClass().getSimpleName() + (t.getMessage() == null ? "" : ": " + t.getMessage());
-            }
-            if (t instanceof InterruptedIOException && !(t instanceof ConnectTimeoutException)) {
-                return null; // read timeout: AutoSys may be working on the request
+                return describe(t);
             }
         }
         return null;
+    }
+
+    /**
+     * Why an open connection to AutoSys ended without an answer (connection reset, closed, TLS handshake
+     * cut off), or null for other failures; a read timeout is not one (AutoSys may be working on it).
+     */
+    static String droppedConnection(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof InterruptedIOException) {
+                return null;
+            }
+            if (t instanceof SocketException || t instanceof EOFException || t instanceof NoHttpResponseException
+                    || t instanceof ConnectionClosedException) {
+                return describe(t);
+            }
+        }
+        return null;
+    }
+
+    private static String describe(Throwable t) {
+        return t.getClass().getSimpleName() + (t.getMessage() == null ? "" : ": " + t.getMessage());
     }
 
     /** Closes the AutoSys response that is not passed on to the browser, so its connection is freed. */

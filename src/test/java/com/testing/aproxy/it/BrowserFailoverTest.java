@@ -14,7 +14,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.net.ServerSocket;
 import java.net.http.HttpResponse;
 
+import com.github.tomakehurst.wiremock.http.Fault;
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
+import com.github.tomakehurst.wiremock.stubbing.Scenario;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -142,6 +144,68 @@ class BrowserFailoverTest {
         assertThat(browser.get("/ui/page").body()).isEqualTo("page from " + first.getPort());
         second.verify(0, getRequestedFor(urlEqualTo("/ui/page")));
         first.verify(getRequestedFor(urlEqualTo("/ui/page")).withHeader("Host", containing("localhost")));
+    }
+
+    @Test
+    void aPageWhoseConnectionIsResetTwiceIsFetchedFromTheNextServer(CapturedOutput output) throws Exception {
+        browser.get("/ui/page");
+        first.stubFor(get("/ui/page").atPriority(1).willReturn(aResponse().withFault(Fault.CONNECTION_RESET_BY_PEER)));
+
+        HttpResponse<String> page = browser.get("/ui/page");
+
+        assertThat(page.statusCode()).isEqualTo(200);
+        assertThat(page.body()).isEqualTo("page from " + second.getPort());
+        assertThat(output.getAll()).contains("connection to AutoSys at " + first.baseUrl() + " dropped",
+                "trying it once more", "[failover] AutoSys at " + first.baseUrl() + " is not usable");
+        first.verify(3, getRequestedFor(urlEqualTo("/ui/page"))); // the first visit, then twice reset
+        assertThat(browser.get("/ui/page").body()).isEqualTo("page from " + second.getPort());
+    }
+
+    @Test
+    void aSingleResetIsTriedAgainOnTheSameServerWithoutSwitching() throws Exception {
+        browser.get("/ui/page");
+        first.stubFor(get("/ui/page").atPriority(1).inScenario("stale").whenScenarioStateIs(Scenario.STARTED)
+                .willSetStateTo("reset once").willReturn(aResponse().withFault(Fault.CONNECTION_RESET_BY_PEER)));
+
+        HttpResponse<String> page = browser.get("/ui/page");
+
+        assertThat(page.body()).isEqualTo("page from " + first.getPort());
+        assertThat(browser.get("/ui/page").body()).isEqualTo("page from " + first.getPort());
+        second.verify(0, getRequestedFor(urlEqualTo("/ui/page")));
+    }
+
+    @Test
+    void aLoginWhoseConnectionIsResetIsSentToTheNextServerWithItsWholeBody(CapturedOutput output)
+            throws Exception {
+        browser.get("/ui/page");
+        first.stubFor(post("/ui/j_login").atPriority(1)
+                .willReturn(aResponse().withFault(Fault.CONNECTION_RESET_BY_PEER)));
+
+        HttpResponse<String> login = browser.post("/ui/j_login", "application/x-www-form-urlencoded",
+                "user=alice&pass=" + PASSWORD, "Origin", browser.origin());
+
+        assertThat(login.statusCode()).isEqualTo(302);
+        first.verify(2, postRequestedFor(urlEqualTo("/ui/j_login"))
+                .withRequestBody(equalTo("user=alice&pass=" + PASSWORD)));
+        second.verify(1, postRequestedFor(urlEqualTo("/ui/j_login"))
+                .withRequestBody(equalTo("user=alice&pass=" + PASSWORD)));
+        assertThat(output.getAll()).contains("POST /ui/j_login -> " + second.baseUrl() + " 302")
+                .contains("\"event\":\"LOGIN_CAPTURED\"")
+                .doesNotContain(PASSWORD);
+    }
+
+    @Test
+    void anotherPostWhoseConnectionIsResetIsNotSentAgain(CapturedOutput output) throws Exception {
+        browser.get("/ui/page");
+        first.stubFor(post("/ui/action").willReturn(aResponse().withFault(Fault.CONNECTION_RESET_BY_PEER)));
+        second.stubFor(post("/ui/action").willReturn(aResponse().withStatus(200)));
+
+        // it may have been executed (e.g. a job started): the browser sees the error, AutoSys no second POST
+        assertThat(browser.post("/ui/action", "application/x-www-form-urlencoded", "job=X").statusCode())
+                .isGreaterThanOrEqualTo(500);
+        first.verify(1, postRequestedFor(urlEqualTo("/ui/action")));
+        second.verify(0, postRequestedFor(urlEqualTo("/ui/action")));
+        assertThat(output.getAll()).contains("not sent again, it may have reached AutoSys");
     }
 
     private static int freePort() {

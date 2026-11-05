@@ -194,18 +194,24 @@ The browser moves on when its request:
 
 - cannot reach the server (connection refused, connect timeout, unknown host): the same request, a login included,
   is sent to the next server at once, since nothing reached AutoSys;
+- loses its connection without an answer (connection reset, connection closed, TLS handshake cut off): a GET, HEAD or
+  the login is tried once more on the same server (a pooled connection the server had closed ends the same way), then
+  sent to the next server, which becomes the one in use. Any other request (it may have reached AutoSys, e.g. started a
+  job) is not sent again: the browser gets the error once, and the next page load finds the outage;
 - is answered with 502, 503 or 504: later requests go to the next server; a GET/HEAD is sent there at once, any other
   request (it may have done something on AutoSys) returns the error to the browser once.
 
 A 500 or a read timeout does not switch servers. Each switch is logged at WARN: `[failover] AutoSys at <url> is not
 usable (<reason>); switching to <url>`; the ACCESS log names the server each request went to.
 
-API calls use the same server. When it goes down during an API call (no connection, or a 5xx answer to the login), the
+API calls use the same server. When it goes down during an API call (no connection, connection reset, or a 5xx answer to
+the login), the
 proxy logs in on the next server with the login it recorded from the browser, finishes the call there and stays there;
 the browser is moved there too. The API token does not change: it keeps working on the new server until it expires, is
 revoked, or AutoSys rejects the recorded password (`autosys-login-rejected`). While every server is down, calls fail with
 502 and the token stays valid; the next call after a server is back works again. An event that was already confirmed
-(Yes sent) is never sent again on another server: its result is `UNKNOWN`.
+(Yes sent) is never sent again on another server: its result is `UNKNOWN`; a server going down earlier in the call
+(e.g. while expanding a box or opening the confirmation dialog) starts the call again on the next server.
 
 The proxy's own session also moves on to the next URL, and after the last one to the first again, when:
 

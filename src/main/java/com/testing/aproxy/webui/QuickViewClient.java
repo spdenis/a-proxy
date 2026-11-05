@@ -169,17 +169,18 @@ public class QuickViewClient {
     public String expandBox(ProxySession session, String boxName, @Nullable String server) {
         session.lock().lock();
         try {
-            State state = state(session);
-            String found = search(session, state, boxName, server);
-            Exchange response = postExpand(state, boxName, found);
-            String problem = partialResponseProblem(response);
-            if (problem != null) {
-                state.reset();
-                throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-session",
-                        "AutoSys Quick View did not expand box " + boxName + ": " + problem);
-            }
-            remember(state, response.body());
-            return response.body();
+            return againWhileDown(session, "expanding box " + boxName, state -> {
+                String found = search(session, state, boxName, server);
+                Exchange response = postExpand(state, boxName, found);
+                String problem = partialResponseProblem(response);
+                if (problem != null) {
+                    state.reset();
+                    throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-session",
+                            "AutoSys Quick View did not expand box " + boxName + ": " + problem);
+                }
+                remember(state, response.body());
+                return response.body();
+            });
         } finally {
             session.lock().unlock();
         }
@@ -233,92 +234,122 @@ public class QuickViewClient {
             @Nullable String comment, @Nullable String server, boolean readStatusAfter) {
         session.lock().lock();
         try {
-            State state = state(session);
-            String found = search(session, state, jobName, server);
-            JobPage page = JobPage.parse(found);
-            // the event goes to the job in the results: it must be the only one there
-            if (!page.hasDetailsFor(jobName) || page.results().size() != 1 || page.row(jobName).isEmpty()) {
-                throw new BackendException(HttpStatus.NOT_FOUND, "job-not-found", "No job named " + jobName
-                        + (page.results().isEmpty() ? "" : " (the search shows " + page.results().size() + " jobs)"));
-            }
-            String job = page.attributes().get("Name");
-            // the action's option of the results' dropdown, or Send Event for an event of its dialog
-            boolean inDialog = action.dialogEvent() != null;
-            EventChoice choice = inDialog
-                    ? choose(found, JobAction.SEND_EVENT, quickview.eventIds().getOrDefault(SEND_EVENT_ID,
-                            quickview.eventIds().get(action.name())))
-                    : choose(found, action.label(), quickview.eventIds().get(action.name()));
-            if (choice == null) {
-                String suffix = quickview.eventSelect().substring(quickview.eventSelect().lastIndexOf(':') + 1);
-                List<String> offered = HtmlForms.selects(found).entrySet().stream()
-                        .filter(e -> e.getKey().equals(quickview.eventSelect()) || e.getKey().endsWith(":" + suffix))
-                        .flatMap(e -> e.getValue().values().stream()).toList();
-                log.info("[backend] Quick View offers no {} for {} ('{}'): dropdown options {}", action.title(), job,
-                        session.username(), offered);
-                return new EventResult(job, Outcome.REJECTED, null, null, "Quick View offers no " + action.title()
-                        + " for job " + job + " (it offers " + String.join(", ", offered) + ")", null);
-            }
-            String what = choice.label() + " of job " + job;
-
-            Exchange chosen = postEvent(state, found, job, choice, true);
-            requirePartial(state, chosen, "choosing " + what);
-            remember(state, chosen.body());
-            Exchange go = postEvent(state, found, job, choice, false);
-            requirePartial(state, go, "pressing Go for " + what);
-            remember(state, go.body());
-
-            String dialogPath = inDialog ? quickview.sendEvent().path()
-                    : quickview.confirmationPath();
-            URI dialog = dialogUri(state, go.body(), dialogPath);
-            if (dialog == null) {
-                String messages = join(messages(chosen.body()), messages(go.body()));
-                if (messages != null) {
-                    log.info("[backend] AutoSys refused {} for '{}': {}", what, session.username(), messages);
-                    return new EventResult(job, Outcome.REJECTED, choice.label(), null, messages, null);
-                }
-                log.warn("[backend] Quick View did not open {} after Go ({} for '{}'): {}",
-                        dialogPath, what, session.username(), snippet(MASK.text(go.body())));
-                throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-unexpected-response",
-                        "Quick View did not open its dialog for " + what + "; the event was not sent");
-            }
-            if (inDialog) {
-                return sendInDialog(session, state, found, job, choice, action, status, comment, dialog,
-                        readStatusAfter);
-            }
-            Landing opened = get(state, dialog, state.pageUrl);
-            String dialogBody = opened.exchange().body();
-            HtmlForms.Form form = opened.exchange().status() == 200
-                    ? HtmlForms.find(dialogBody, quickview.confirmationForm()) : null;
-            if (form == null || !dialogBody.contains(quickview.confirmButton())) {
-                log.warn("[backend] the confirmation dialog for {} did not open for '{}': {} {} -> {}, body: {}", what,
-                        session.username(), "GET", opened.uri().getPath(), opened.exchange().status(),
-                        snippet(MASK.text(dialogBody)));
-                throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-unexpected-response",
-                        "The confirmation dialog for " + what + " did not open (" + opened.uri().getPath()
-                                + " answered status " + opened.exchange().status() + "); the event was not sent");
-            }
-            String question = cut(HtmlForms.text(dialogBody), 500);
-
-            // from here on the event may have been executed: no retry, an unclear answer is UNKNOWN
-            Exchange answer;
-            try {
-                answer = postConfirm(state, opened.uri(), form);
-            } catch (BackendException e) {
-                state.reset();
-                return new EventResult(job, Outcome.UNKNOWN, choice.label(), question,
-                        "No answer from AutoSys after confirming: " + e.getMessage(), null);
-            }
-            boolean closed = answer.status() == 200 && !answer.body().contains("<form")
-                    && !answer.body().contains("ViewExpired");
-            String message = HtmlForms.text(answer.body());
-            log.info("[backend] '{}' confirmed {}: {} {}, {} bytes, answer: {}", session.username(), what,
-                    answer.status(), answer.contentType(), answer.body().length(), snippet(MASK.text(answer.body())));
-            if (!closed) {
-                state.reset();
-            }
-            return finish(session, state, job, choice.label(), closed, question, message, readStatusAfter);
+            // until Yes/OK is sent nothing has happened: a server going down before that starts it again on
+            // the next one; once sent, failures are not thrown but answered UNKNOWN, so it is never sent twice
+            return againWhileDown(session, action.title() + " of " + jobName,
+                    state -> sendEventOn(session, state, jobName, action, status, comment, server, readStatusAfter));
         } finally {
             session.lock().unlock();
+        }
+    }
+
+    private EventResult sendEventOn(ProxySession session, State state, String jobName, JobAction action,
+            @Nullable String status, @Nullable String comment, @Nullable String server, boolean readStatusAfter) {
+        String found = search(session, state, jobName, server);
+        JobPage page = JobPage.parse(found);
+        // the event goes to the job in the results: it must be the only one there
+        if (!page.hasDetailsFor(jobName) || page.results().size() != 1 || page.row(jobName).isEmpty()) {
+            throw new BackendException(HttpStatus.NOT_FOUND, "job-not-found", "No job named " + jobName
+                    + (page.results().isEmpty() ? "" : " (the search shows " + page.results().size() + " jobs)"));
+        }
+        String job = page.attributes().get("Name");
+        // the action's option of the results' dropdown, or Send Event for an event of its dialog
+        boolean inDialog = action.dialogEvent() != null;
+        EventChoice choice = inDialog
+                ? choose(found, JobAction.SEND_EVENT, quickview.eventIds().getOrDefault(SEND_EVENT_ID,
+                        quickview.eventIds().get(action.name())))
+                : choose(found, action.label(), quickview.eventIds().get(action.name()));
+        if (choice == null) {
+            String suffix = quickview.eventSelect().substring(quickview.eventSelect().lastIndexOf(':') + 1);
+            List<String> offered = HtmlForms.selects(found).entrySet().stream()
+                    .filter(e -> e.getKey().equals(quickview.eventSelect()) || e.getKey().endsWith(":" + suffix))
+                    .flatMap(e -> e.getValue().values().stream()).toList();
+            log.info("[backend] Quick View offers no {} for {} ('{}'): dropdown options {}", action.title(), job,
+                    session.username(), offered);
+            return new EventResult(job, Outcome.REJECTED, null, null, "Quick View offers no " + action.title()
+                    + " for job " + job + " (it offers " + String.join(", ", offered) + ")", null);
+        }
+        String what = choice.label() + " of job " + job;
+
+        Exchange chosen = postEvent(state, found, job, choice, true);
+        requirePartial(state, chosen, "choosing " + what);
+        remember(state, chosen.body());
+        Exchange go = postEvent(state, found, job, choice, false);
+        requirePartial(state, go, "pressing Go for " + what);
+        remember(state, go.body());
+
+        String dialogPath = inDialog ? quickview.sendEvent().path()
+                : quickview.confirmationPath();
+        URI dialog = dialogUri(state, go.body(), dialogPath);
+        if (dialog == null) {
+            String messages = join(messages(chosen.body()), messages(go.body()));
+            if (messages != null) {
+                log.info("[backend] AutoSys refused {} for '{}': {}", what, session.username(), messages);
+                return new EventResult(job, Outcome.REJECTED, choice.label(), null, messages, null);
+            }
+            log.warn("[backend] Quick View did not open {} after Go ({} for '{}'): {}",
+                    dialogPath, what, session.username(), snippet(MASK.text(go.body())));
+            throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-unexpected-response",
+                    "Quick View did not open its dialog for " + what + "; the event was not sent");
+        }
+        if (inDialog) {
+            return sendInDialog(session, state, found, job, choice, action, status, comment, dialog,
+                    readStatusAfter);
+        }
+        Landing opened = get(state, dialog, state.pageUrl);
+        String dialogBody = opened.exchange().body();
+        HtmlForms.Form form = opened.exchange().status() == 200
+                ? HtmlForms.find(dialogBody, quickview.confirmationForm()) : null;
+        if (form == null || !dialogBody.contains(quickview.confirmButton())) {
+            log.warn("[backend] the confirmation dialog for {} did not open for '{}': {} {} -> {}, body: {}", what,
+                    session.username(), "GET", opened.uri().getPath(), opened.exchange().status(),
+                    snippet(MASK.text(dialogBody)));
+            throw new BackendException(HttpStatus.BAD_GATEWAY, "autosys-unexpected-response",
+                    "The confirmation dialog for " + what + " did not open (" + opened.uri().getPath()
+                            + " answered status " + opened.exchange().status() + "); the event was not sent");
+        }
+        String question = cut(HtmlForms.text(dialogBody), 500);
+
+        // from here on the event may have been executed: no retry, an unclear answer is UNKNOWN
+        Exchange answer;
+        try {
+            answer = postConfirm(state, opened.uri(), form);
+        } catch (BackendException e) {
+            state.reset();
+            return new EventResult(job, Outcome.UNKNOWN, choice.label(), question,
+                    "No answer from AutoSys after confirming: " + e.getMessage(), null);
+        }
+        boolean closed = answer.status() == 200 && !answer.body().contains("<form")
+                && !answer.body().contains("ViewExpired");
+        String message = HtmlForms.text(answer.body());
+        log.info("[backend] '{}' confirmed {}: {} {}, {} bytes, answer: {}", session.username(), what,
+                answer.status(), answer.contentType(), answer.body().length(), snippet(MASK.text(answer.body())));
+        if (!closed) {
+            state.reset();
+        }
+        return finish(session, state, job, choice.label(), closed, question, message, readStatusAfter);
+    }
+
+    /**
+     * Runs an API call (which starts with a search, failing over by itself); when the server goes down in a
+     * later step, starts the call again on the next server, each server once. Only for steps that change
+     * nothing on AutoSys while they can still fail.
+     */
+    private <T> T againWhileDown(ProxySession session, String what, java.util.function.Function<State, T> call) {
+        for (int tried = 1; ; tried++) {
+            State state = state(session);
+            try {
+                return call.apply(state);
+            } catch (BackendException e) {
+                if (!serverDown(e) || tried >= bases.size()) {
+                    throw e;
+                }
+                URI failed = state.base;
+                state.reset();
+                log.info("[backend] AutoSys at {} went down during {} for '{}' ({}); nothing was sent yet, "
+                        + "starting again on {}", failed, what, session.username(), e.getMessage(),
+                        moveOn(state, failed, e.getMessage()));
+            }
         }
     }
 

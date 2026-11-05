@@ -139,6 +139,8 @@ public class LoginCaptureFilter extends OncePerRequestFilter {
             return;
         }
 
+        // a login can be sent again to the next AutoSys server when the connection drops
+        request.setAttribute(ResendableBodyFilter.LOGIN_REQUEST, Boolean.TRUE);
         LoginRequestWrapper wrapped = wrapForInspection(request);
         Credentials credentials = extractCredentials(wrapped);
         ContentCachingResponseWrapper cachingResponse = new ContentCachingResponseWrapper(response);
