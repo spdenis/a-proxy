@@ -184,14 +184,14 @@ class SessionRegistryTest {
         return new AutosysProperties(URI.create("https://autosys.example.internal"), null, Set.of("DEV"), "DEV",
                 new AutosysProperties.Proxy("", false, true, true, null),
                 new AutosysProperties.Session(idle, absolute, Duration.ofMinutes(5), true),
-                null, new AutosysProperties.Token(false, keepOnRelogin), null, null, null, null);
+                null, new AutosysProperties.Token(false, keepOnRelogin), null, null, null, null, null);
     }
 
     static AutosysProperties propertiesWithIpBinding() {
         return new AutosysProperties(URI.create("https://autosys.example.internal"), null, Set.of("DEV"), "DEV",
                 new AutosysProperties.Proxy("", false, true, true, null),
                 new AutosysProperties.Session(Duration.ofHours(8), Duration.ofHours(24), Duration.ofMinutes(5), true),
-                null, new AutosysProperties.Token(true, true), null, null, null, null);
+                null, new AutosysProperties.Token(true, true), null, null, null, null, null);
     }
 
     static final class MutableClock extends Clock {

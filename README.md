@@ -249,6 +249,24 @@ login (step 3) is used when the browser's session does not work.
 
 Set `logging.level.com.testing.aproxy.webui=DEBUG` to see each request the proxy makes to AutoSys (paths only).
 
+### Cached job reads
+
+One Quick View search answers `status`, `dependencies`, `runs` and the job itself, and so does one box expansion
+for `jobs`. The proxy keeps these results for a short time, so asking about the same job again costs no AutoSys
+request. An entry is dropped:
+
+- when its time is up: `autosys.job-cache.ttl`, 30 s by default;
+- at once, after an action through the API (`POST .../actions`, whatever its outcome) on:
+  - the job itself;
+  - a job named in its condition (e.g. a force start of `FEED_SYNC` drops `LOADER` with `s(FEED_SYNC)`);
+  - the box it is in, or any box above it (the jobs inside change with the box);
+- for a box's job list, also after an action on one of its jobs.
+
+Entries are kept per AutoSys user and server. Changes made outside the proxy's API (the AutoSys UI, the scheduler
+itself) show up when the time is up. Add `?fresh=true` to read AutoSys now. Answers say `X-Cache: HIT` (with
+`Age` in seconds) or `MISS`, and `fetchedAt` is when AutoSys was read. Wildcard searches (`GET /api/v1/jobs?name=`)
+are not cached. Turn it off with `autosys.job-cache.enabled: false`.
+
 ### Keep-alive (optional)
 
 AutoSys ends an unused session after a while, and the next API call then has to open Quick View again (or fails

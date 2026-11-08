@@ -51,13 +51,16 @@ public class JobActionController {
     private static final Pattern STATUS = Pattern.compile("[A-Za-z_ ]{1,32}");
 
     private final QuickViewClient quickView;
+    private final JobStatusCache cache;
     private final AuditLogger audit;
     private final AutosysProperties.Actions actions;
     private final Cache<String, Replay> replays;
     private final Cache<String, Deque<Instant>> recent;
 
-    public JobActionController(QuickViewClient quickView, AuditLogger audit, AutosysProperties properties) {
+    public JobActionController(QuickViewClient quickView, AuditLogger audit, AutosysProperties properties,
+            JobStatusCache cache) {
         this.quickView = quickView;
+        this.cache = cache;
         this.audit = audit;
         this.actions = properties.actions();
         this.replays = Caffeine.newBuilder().expireAfterWrite(actions.idempotencyTtl()).maximumSize(10_000).build();
@@ -134,10 +137,16 @@ public class JobActionController {
                 audit.jobAction(session.username(), session.sessionId(), request.getRemoteAddr(), result.job(),
                         what, result.outcome().name(), requestId, result.message(), comment);
                 response = response(result, action, status, requestId);
+                if (!result.job().equalsIgnoreCase(name)) {
+                    cache.actionOn(result.job());
+                }
             } catch (BackendException e) {
                 audit.jobAction(session.username(), session.sessionId(), request.getRemoteAddr(), name,
                         what, "NOT_SENT", requestId, e.getMessage(), comment);
                 throw e;
+            } finally {
+                // also when the answer is unclear or nothing was confirmed: better one search too many
+                cache.actionOn(name);
             }
             if (replayKey != null) {
                 replays.put(replayKey, new Replay(name, what, response));

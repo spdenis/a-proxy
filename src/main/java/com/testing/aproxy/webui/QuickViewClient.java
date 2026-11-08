@@ -161,6 +161,21 @@ public class QuickViewClient {
     }
 
     /**
+     * The AutoSys server label a read with this {@code server} goes to: the one asked for, else the configured
+     * one, else the one chosen last; null = the page's default.
+     */
+    public @Nullable String serverFor(ProxySession session, @Nullable String server) {
+        if (server != null) {
+            return server;
+        }
+        if (quickview.server() != null) {
+            return quickview.server();
+        }
+        State state = states.getIfPresent(session);
+        return state == null ? null : state.serverLabel;
+    }
+
+    /**
      * Searches for a box and expands it in the results tree, as clicking its expand icon does;
      * returns that response, which lists the box and the jobs directly in it.
      */

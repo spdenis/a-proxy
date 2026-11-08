@@ -413,6 +413,10 @@ class QuickViewApiTest {
 
     /** Quick View's force start: choosing the event, Go (opens the dialog), the dialog, its Yes. */
     static void stubEvents(String goResponse, int answerStatus) throws IOException {
+        stubEvents(autosys, goResponse, answerStatus);
+    }
+
+    static void stubEvents(WireMockExtension autosys, String goResponse, int answerStatus) throws IOException {
         autosys.stubFor(post(urlEqualTo(SEARCH)).atPriority(1)
                 .withRequestBody(containing("source=jobResultTable%3AeventId&"))
                 .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/xml;charset=utf-8")

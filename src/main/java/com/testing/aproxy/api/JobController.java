@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 
+import jakarta.servlet.http.HttpServletResponse;
+
 import com.testing.aproxy.session.ProxySession;
 import com.testing.aproxy.webui.BackendException;
 import com.testing.aproxy.webui.JobPage;
@@ -38,9 +40,11 @@ public class JobController {
     private static final Logger log = LoggerFactory.getLogger(JobController.class);
 
     private final QuickViewClient quickView;
+    private final JobStatusCache cache;
 
-    public JobController(QuickViewClient quickView) {
+    public JobController(QuickViewClient quickView, JobStatusCache cache) {
         this.quickView = quickView;
+        this.cache = cache;
     }
 
     public record JobList(String query, List<JobPage.JobRow> jobs, Instant fetchedAt) {
@@ -79,71 +83,114 @@ public class JobController {
 
     @GetMapping("/{name}")
     public JobDetails details(@AuthenticationPrincipal ProxySession session, @PathVariable String name,
-            @RequestParam(required = false) @Nullable String server) {
-        JobPage page = job(session, name, server);
+            @RequestParam(required = false) @Nullable String server,
+            @RequestParam(defaultValue = "false") boolean fresh, HttpServletResponse response) {
+        JobStatusCache.Read<JobPage> read = job(session, name, server, fresh);
+        JobPage page = read.value();
         JobPage.JobRow row = page.row(name).orElse(null);
         String jobName = page.attributes().get("Name");
         List<JobPage.JobRow> jobs = null;
+        Instant fetchedAt = read.fetchedAt();
+        boolean cached = read.cached();
         if (row != null && JobPage.BOX.equals(row.type())) {
             try {
-                jobs = JobPage.parse(quickView.expandBox(session, jobName, server(server))).jobsIn(jobName);
+                JobStatusCache.Read<List<JobPage.JobRow>> box = boxJobs(session, jobName, page, server, fresh);
+                jobs = box.value();
+                fetchedAt = box.fetchedAt().isBefore(fetchedAt) ? box.fetchedAt() : fetchedAt;
+                cached |= box.cached();
             } catch (BackendException e) {
                 log.warn("[backend] jobs of box {} not listed: {}", jobName, e.getMessage());
             }
         }
+        cacheHeaders(response, cached, fetchedAt);
         return new JobDetails(jobName, row == null ? null : row.type(), row == null ? null : row.jobType(),
                 row != null && row.box() != null ? row.box() : page.attributes().get("Box"), row, jobs,
                 page.attributes(), page.conditions(), page.dependents(), page.resources(), page.runs(),
-                Instant.now());
+                fetchedAt);
     }
 
     @GetMapping("/{name}/jobs")
     public BoxJobs jobs(@AuthenticationPrincipal ProxySession session, @PathVariable String name,
-            @RequestParam(required = false) @Nullable String server) {
-        JobPage page = job(session, name, server);
+            @RequestParam(required = false) @Nullable String server,
+            @RequestParam(defaultValue = "false") boolean fresh, HttpServletResponse response) {
+        JobPage page = job(session, name, server, fresh).value();
         JobPage.JobRow row = page.row(name).orElse(null);
         if (row == null || !JobPage.BOX.equals(row.type())) {
             throw new BackendException(HttpStatus.CONFLICT, "not-a-box", name + " is not a box job"
                     + (row == null || row.jobType() == null ? "" : " (its type is " + row.jobType() + ")"));
         }
         String jobName = page.attributes().get("Name");
-        return new BoxJobs(jobName, JobPage.parse(quickView.expandBox(session, jobName, server(server))).jobsIn(jobName),
-                Instant.now());
+        JobStatusCache.Read<List<JobPage.JobRow>> jobs = boxJobs(session, jobName, page, server, fresh);
+        cacheHeaders(response, jobs.cached(), jobs.fetchedAt());
+        return new BoxJobs(jobName, jobs.value(), jobs.fetchedAt());
     }
 
     @GetMapping("/{name}/status")
     public JobPage.JobRow status(@AuthenticationPrincipal ProxySession session, @PathVariable String name,
-            @RequestParam(required = false) @Nullable String server) {
-        return job(session, name, server).row(name).orElseThrow(() -> new BackendException(HttpStatus.BAD_GATEWAY,
+            @RequestParam(required = false) @Nullable String server,
+            @RequestParam(defaultValue = "false") boolean fresh, HttpServletResponse response) {
+        JobStatusCache.Read<JobPage> read = job(session, name, server, fresh);
+        cacheHeaders(response, read.cached(), read.fetchedAt());
+        return read.value().row(name).orElseThrow(() -> new BackendException(HttpStatus.BAD_GATEWAY,
                 "unexpected-response", "Quick View showed job " + name + " but no status row"));
     }
 
     @GetMapping("/{name}/dependencies")
     public JobDependencies dependencies(@AuthenticationPrincipal ProxySession session, @PathVariable String name,
-            @RequestParam(required = false) @Nullable String server) {
-        JobPage page = job(session, name, server);
+            @RequestParam(required = false) @Nullable String server,
+            @RequestParam(defaultValue = "false") boolean fresh, HttpServletResponse response) {
+        JobStatusCache.Read<JobPage> read = job(session, name, server, fresh);
+        cacheHeaders(response, read.cached(), read.fetchedAt());
+        JobPage page = read.value();
         return new JobDependencies(page.attributes().get("Name"), page.attributes().get("Condition"),
-                page.conditions(), page.dependents(), Instant.now());
+                page.conditions(), page.dependents(), read.fetchedAt());
     }
 
     @GetMapping("/{name}/runs")
     public JobRuns runs(@AuthenticationPrincipal ProxySession session, @PathVariable String name,
-            @RequestParam(required = false) @Nullable String server) {
-        JobPage page = job(session, name, server);
-        return new JobRuns(page.attributes().get("Name"), page.runs(), Instant.now());
+            @RequestParam(required = false) @Nullable String server,
+            @RequestParam(defaultValue = "false") boolean fresh, HttpServletResponse response) {
+        JobStatusCache.Read<JobPage> read = job(session, name, server, fresh);
+        cacheHeaders(response, read.cached(), read.fetchedAt());
+        return new JobRuns(read.value().attributes().get("Name"), read.value().runs(), read.fetchedAt());
     }
 
-    private JobPage job(ProxySession session, String name, @Nullable String server) {
+    /** The job's Quick View page, from the cache unless {@code fresh}; a job not found is not cached. */
+    private JobStatusCache.Read<JobPage> job(ProxySession session, String name, @Nullable String server,
+            boolean fresh) {
         if (!JOB_NAME.matcher(name).matches()) {
             throw invalidName(name);
         }
-        JobPage page = JobPage.parse(quickView.searchJob(session, name, server(server)));
-        if (!page.hasDetailsFor(name)) {
-            throw new BackendException(HttpStatus.NOT_FOUND, "job-not-found", "No job named " + name
-                    + (page.results().isEmpty() ? "" : " (the search matched " + page.results().size() + " other jobs)"));
+        String label = server(server);
+        JobStatusCache.Read<JobPage> read = cache.job(session.username(), quickView.serverFor(session, label), name,
+                fresh, () -> {
+                    JobPage page = JobPage.parse(quickView.searchJob(session, name, label));
+                    if (!page.hasDetailsFor(name)) {
+                        throw new BackendException(HttpStatus.NOT_FOUND, "job-not-found", "No job named " + name
+                                + (page.results().isEmpty() ? ""
+                                        : " (the search matched " + page.results().size() + " other jobs)"));
+                    }
+                    return page;
+                });
+        session.rememberJob(read.value().attributes().get("Name"));
+        return read;
+    }
+
+    private JobStatusCache.Read<List<JobPage.JobRow>> boxJobs(ProxySession session, String box, JobPage page,
+            @Nullable String server, boolean fresh) {
+        String label = server(server);
+        return cache.boxJobs(session.username(), quickView.serverFor(session, label), box,
+                page.attributes().get("Box"), fresh,
+                () -> JobPage.parse(quickView.expandBox(session, box, label)).jobsIn(box));
+    }
+
+    /** {@code X-Cache: HIT} with the answer's age when it came from the cache, else MISS. */
+    private static void cacheHeaders(HttpServletResponse response, boolean cached, Instant fetchedAt) {
+        response.setHeader("X-Cache", cached ? "HIT" : "MISS");
+        if (cached) {
+            response.setHeader("Age", Long.toString(Math.max(0,
+                    java.time.Duration.between(fetchedAt, Instant.now()).toSeconds())));
         }
-        session.rememberJob(page.attributes().get("Name"));
-        return page;
     }
 
     /** The AutoSys server asked for (its label in Quick View's server dropdown), null when none. */

@@ -39,7 +39,8 @@ public record AutosysProperties(
         @Valid @DefaultValue Webui webui,
         @Valid @DefaultValue Actions actions,
         @Valid @DefaultValue KeepAlive keepAlive,
-        @Valid @DefaultValue Capture capture) {
+        @Valid @DefaultValue Capture capture,
+        @Valid @DefaultValue JobCache jobCache) {
 
     public AutosysProperties {
         backendUrls = backendUrls == null || backendUrls.isEmpty() ? List.of(baseUrl) : List.copyOf(backendUrls);
@@ -59,6 +60,17 @@ public record AutosysProperties(
         public KeepAlive {
             job = blankToNull(job);
         }
+    }
+
+    /**
+     * Short-lived cache of job reads (status, definition, conditions, runs, box job lists). An entry is dropped
+     * when its time is up, or when an action is sent through the API on the job, a job in its condition, or its box.
+     */
+    public record JobCache(
+            @DefaultValue("true") boolean enabled,
+            /* How long a read is reused; changes made outside the proxy's API show up after this at the latest. */
+            @DefaultValue("30s") Duration ttl,
+            @DefaultValue("10000") long maxEntries) {
     }
 
     /** Job actions ({@code POST /api/v1/jobs/{name}/actions}): force start and other job events. */

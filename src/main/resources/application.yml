@@ -44,6 +44,11 @@ autosys:
     # truststore: file:/path/to/truststore.p12
     # truststore-password: ${TRUSTSTORE_PASSWORD}
     trust-all-certificates: false   # true = do not check the AutoSys server certificate (test servers only)
+  job-cache:
+    enabled: true
+    ttl: 30s                      # reads of a job are reused this long; an action through the API on the job,
+                                  # a job in its condition or its box drops them at once
+    max-entries: 10000
   token:
     bind-client-ip: false
     keep-on-relogin: true         # logging in again keeps the earlier token working; false = the new login replaces it
