@@ -6,6 +6,8 @@ autosys.base-url=https://your-autosys-webui-host:8443
 # Several servers: failover order; when set, it replaces base-url as the server list (see README "Several AutoSys URLs")
 #autosys.backend-urls=https://your-autosys-webui-1:8443,https://your-autosys-webui-2:8443
 autosys.environment=DEV
+# Time zone of the times AutoSys shows (start/end times), for time conditions such as look-backs; default ET
+#autosys.time-zone=America/New_York
 
 # --- Proxy port
 server.port=8080

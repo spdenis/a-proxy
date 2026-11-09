@@ -40,10 +40,30 @@ public record AutosysProperties(
         @Valid @DefaultValue Actions actions,
         @Valid @DefaultValue KeepAlive keepAlive,
         @Valid @DefaultValue Capture capture,
-        @Valid @DefaultValue JobCache jobCache) {
+        @Valid @DefaultValue JobCache jobCache,
+        @Valid @DefaultValue Blockers blockers,
+        /*
+         * Time zone of the times AutoSys shows (start and end times in Quick View), used for time conditions such
+         * as look-backs. A zone id like America/New_York; default ET.
+         */
+        @DefaultValue(AutosysProperties.ET) String timeZone) {
+
+    public static final String ET = "America/New_York";
 
     public AutosysProperties {
         backendUrls = backendUrls == null || backendUrls.isEmpty() ? List.of(baseUrl) : List.copyOf(backendUrls);
+        timeZone = timeZone == null || timeZone.isBlank() ? ET : timeZone.strip();
+        try {
+            java.time.ZoneId.of(timeZone);
+        } catch (java.time.DateTimeException e) {
+            throw new IllegalArgumentException("autosys.time-zone: not a time zone id: " + timeZone
+                    + " (use e.g. America/New_York)", e);
+        }
+    }
+
+    /** The AutoSys time zone ({@code autosys.time-zone}). */
+    public java.time.ZoneId zone() {
+        return java.time.ZoneId.of(timeZone);
     }
 
     /**
@@ -71,6 +91,14 @@ public record AutosysProperties(
             /* How long a read is reused; changes made outside the proxy's API show up after this at the latest. */
             @DefaultValue("30s") Duration ttl,
             @DefaultValue("10000") long maxEntries) {
+    }
+
+    /** The scan for unready dependencies ({@code GET /api/v1/blockers}). */
+    public record Blockers(
+            /* Most jobs read for one scan (each is a Quick View search unless cached); more = truncated. */
+            @DefaultValue("200") int maxJobs,
+            /* Most dependency levels followed up from the jobs asked about. */
+            @DefaultValue("30") int maxDepth) {
     }
 
     /** Job actions ({@code POST /api/v1/jobs/{name}/actions}): force start and other job events. */

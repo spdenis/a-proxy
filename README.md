@@ -249,6 +249,70 @@ login (step 3) is used when the browser's session does not work.
 
 Set `logging.level.com.testing.aproxy.webui=DEBUG` to see each request the proxy makes to AutoSys (paths only).
 
+### Blockers: what keeps jobs from starting
+
+```
+GET /api/v1/blockers?jobs=JOB_A,JOB_B&mode=all     # or mode=root; also ?server=QA5, ?fresh=true
+GET /api/v1/jobs/JOB_A/blockers?mode=root
+```
+
+Quick View shows only a job's own conditions. This endpoint follows them further up and lists every dependency
+that is **not ready**, in the order to complete them: root blockers first, then the jobs that wait for them, down
+to the jobs asked about.
+
+- **`mode=all`** (default): every unready dependency on the way.
+- **`mode=root`**: only the root blockers, the ones that wait for nothing unready themselves; the jobs in between
+  are left out.
+
+A dependency is not ready when its part of the condition does not hold now. This follows the condition type:
+
+| Condition | Ready when the job is |
+|---|---|
+| `s(JOB)` | `SUCCESS` |
+| `f(JOB)` | `FAILURE` |
+| `d(JOB)` | `SUCCESS`, `FAILURE` or `TERMINATED` |
+| `t(JOB)` | `TERMINATED` |
+| `n(JOB)` | not running |
+| `e(JOB) > 1` | ended, and the exit code compares |
+
+- **Look-back:** `s(JOB,02.00)` also needs the job to have ended within the last 2 hours. A `SUCCESS` from
+  earlier is **not ready**. With `0`, the job must have ended after the waiting job's last start.
+  - AutoSys shows its times in its own time zone, `autosys.time-zone` (default ET, `America/New_York`; set it
+    in `user.properties` if your AutoSys runs in another zone). The look-back is checked in that zone.
+- **AND / OR:** only parts that keep the whole condition false count. In `s(A) | s(B)` nothing blocks while
+  either holds. When neither does, both are listed with `anyOf: true`: either one is enough.
+  - Without parentheses, AND binds tighter than OR.
+- **AutoSys's own answer:** Quick View's "satisfied" flag is used too, and a condition holds only when neither
+  says otherwise. A condition Quick View shows as satisfied, without a look-back, is not looked into further.
+- **Boxes:** a job in a box starts only while the box runs, so a box that isn't running blocks the jobs
+  waiting in it (`condition: "box"`).
+  - The box of a job that ended in `FAILURE` / `TERMINATED` is not listed: that's a consequence, not a cause.
+  - **A box that blocks is followed by its state:**
+    - Not started yet (`INACTIVE`, `ACTIVATED`, `ON_HOLD`, ...): through its own conditions and box.
+    - Started (`RUNNING`) or ended badly (`FAILURE`, `TERMINATED`): the scan looks inside it for the jobs that
+      keep it from completing (`condition: "inside box"`).
+      - In a running box, every job not done yet: running, waiting or failed. Each is followed further
+        through its own conditions, and nested boxes are looked into the same way.
+      - In a failed box, only the jobs that failed or were terminated. The jobs that never ran did so because
+        of them.
+- **Where the scan stops:**
+  - A running dependency is listed, but what it waited for is not: it only has to finish.
+  - A job `ON_ICE` / `ON_NOEXEC` counts as met, as in AutoSys.
+  - Global variables (`v()`) and jobs of other instances (`JOB^INS`) can't be looked into: listed as
+    `VARIABLE` / `EXTERNAL` unless Quick View shows them as satisfied.
+  - A missing job is `UNKNOWN`.
+
+Each blocker has:
+- `name`, `kind` (`JOB`, `BOX`, `VARIABLE`, `EXTERNAL`, `UNKNOWN`), and the state: `status`, times, `exitCode`;
+- `root`, and `waitsFor`: its own unready dependencies;
+- `blocks`: which jobs it holds up, with the `condition` and the `reason`;
+- `targets`: which of the jobs asked about it holds up;
+- `cycle`, for dependency loops.
+
+`targets` describes each job asked about: its `status`, `condition`, `nextStartTime` and `blocked`. Start times
+and run calendars are not dependencies and are not checked. One scan reads at most `autosys.blockers.max-jobs`
+jobs (200, cached reads count too) and `max-depth` levels (30); past that, `truncated: true`.
+
 ### Cached job reads
 
 One Quick View search answers `status`, `dependencies`, `runs` and the job itself, and so does one box expansion

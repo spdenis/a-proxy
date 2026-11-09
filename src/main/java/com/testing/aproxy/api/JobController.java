@@ -40,11 +40,11 @@ public class JobController {
     private static final Logger log = LoggerFactory.getLogger(JobController.class);
 
     private final QuickViewClient quickView;
-    private final JobStatusCache cache;
+    private final JobReads reads;
 
-    public JobController(QuickViewClient quickView, JobStatusCache cache) {
+    public JobController(QuickViewClient quickView, JobReads reads) {
         this.quickView = quickView;
-        this.cache = cache;
+        this.reads = reads;
     }
 
     public record JobList(String query, List<JobPage.JobRow> jobs, Instant fetchedAt) {
@@ -155,37 +155,18 @@ public class JobController {
         return new JobRuns(read.value().attributes().get("Name"), read.value().runs(), read.fetchedAt());
     }
 
-    /** The job's Quick View page, from the cache unless {@code fresh}; a job not found is not cached. */
     private JobStatusCache.Read<JobPage> job(ProxySession session, String name, @Nullable String server,
             boolean fresh) {
-        if (!JOB_NAME.matcher(name).matches()) {
-            throw invalidName(name);
-        }
-        String label = server(server);
-        JobStatusCache.Read<JobPage> read = cache.job(session.username(), quickView.serverFor(session, label), name,
-                fresh, () -> {
-                    JobPage page = JobPage.parse(quickView.searchJob(session, name, label));
-                    if (!page.hasDetailsFor(name)) {
-                        throw new BackendException(HttpStatus.NOT_FOUND, "job-not-found", "No job named " + name
-                                + (page.results().isEmpty() ? ""
-                                        : " (the search matched " + page.results().size() + " other jobs)"));
-                    }
-                    return page;
-                });
-        session.rememberJob(read.value().attributes().get("Name"));
-        return read;
+        return reads.page(session, name, server, fresh);
     }
 
     private JobStatusCache.Read<List<JobPage.JobRow>> boxJobs(ProxySession session, String box, JobPage page,
             @Nullable String server, boolean fresh) {
-        String label = server(server);
-        return cache.boxJobs(session.username(), quickView.serverFor(session, label), box,
-                page.attributes().get("Box"), fresh,
-                () -> JobPage.parse(quickView.expandBox(session, box, label)).jobsIn(box));
+        return reads.boxJobs(session, box, page, server, fresh);
     }
 
     /** {@code X-Cache: HIT} with the answer's age when it came from the cache, else MISS. */
-    private static void cacheHeaders(HttpServletResponse response, boolean cached, Instant fetchedAt) {
+    static void cacheHeaders(HttpServletResponse response, boolean cached, Instant fetchedAt) {
         response.setHeader("X-Cache", cached ? "HIT" : "MISS");
         if (cached) {
             response.setHeader("Age", Long.toString(Math.max(0,

@@ -179,7 +179,7 @@ class JobStatusCacheTest {
     private static AutosysProperties properties(boolean enabled, Duration ttl) {
         return new AutosysProperties(URI.create("https://autosys.example.internal"), null, Set.of("DEV"), "DEV",
                 null, null, null, null, null, null, null, null,
-                new AutosysProperties.JobCache(enabled, ttl, 1000));
+                new AutosysProperties.JobCache(enabled, ttl, 1000), null, null);
     }
 
     static final class TestClock extends Clock {
