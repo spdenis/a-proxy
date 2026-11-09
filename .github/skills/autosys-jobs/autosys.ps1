@@ -5,6 +5,9 @@
 .DESCRIPTION
     Single calls (job, status, deps, runs, jobs, search, session) print the API response.
     Traversals (downstream, upstream, tree) make one call per job and print the collected graph.
+    blockers asks the proxy for the dependencies that keep one or more jobs from starting (followed up through
+    conditions and boxes, root blockers first), in one call; -Mode root lists only the root blockers.
+    Reads are cached by the proxy for a short time (30 s by default); -Fresh reads AutoSys now.
     force-start sends FORCE_STARTJOB for one job (only after the user has confirmed it) and prints the outcome.
     change-status sends CHANGE_STATUS with -Status for one job (only after the user has confirmed it).
     kill sends KILLJOB for one running job (only after the user has confirmed it).
@@ -36,6 +39,7 @@
     powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 deps MY_JOB
     powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 downstream MY_JOB -Depth 3
     powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 tree MY_BOX
+    powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 blockers MY_JOB,MY_BOX -Mode root -Fresh
     powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 force-start MY_JOB -Comment "rerun after fix"
     powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 change-status MY_JOB -Status INACTIVE -Comment "reset"
     powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 kill MY_JOB -Comment "hung since 02:00"
@@ -43,7 +47,7 @@
 param(
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateSet('set-token', 'session', 'job', 'status', 'deps', 'runs', 'jobs', 'search', 'downstream', 'upstream', 'tree',
-        'force-start', 'change-status', 'kill', 'proxy-list', 'proxy-add', 'proxy-use', 'server-use')]
+        'blockers', 'force-start', 'change-status', 'kill', 'proxy-list', 'proxy-add', 'proxy-use', 'server-use')]
     [string]$Command,
 
     [Parameter(Position = 1)]
@@ -65,6 +69,13 @@ param(
 
     # traversals: stop after this many jobs (one API call each)
     [int]$MaxJobs = 100,
+
+    # blockers: all = every unready dependency in the order to complete them, root = only the root blockers
+    [ValidateSet('all', 'root')]
+    [string]$Mode = 'all',
+
+    # reads: skip the proxy's short cache and read AutoSys now
+    [switch]$Fresh,
 
     # change-status: the new status
     [ValidateSet('RUNNING', 'STARTING', 'SUCCESS', 'FAILURE', 'INACTIVE', 'TERMINATED')]
@@ -218,6 +229,9 @@ function Get-Api([string]$path, [string]$method = 'Get', $payload = $null) {
         if ($payload) { $payload['server'] = $serverName }
         else { $path += $(if ($path.Contains('?')) { '&' } else { '?' }) + 'server=' + [uri]::EscapeDataString($serverName) }
     }
+    if ($Fresh -and -not $payload -and $path -ne '/api/v1/session') {
+        $path += $(if ($path.Contains('?')) { '&' } else { '?' }) + 'fresh=true'
+    }
     try {
         $headers = @{ Authorization = "Bearer $token"; Accept = 'application/json' }
         if ($payload) {
@@ -226,7 +240,9 @@ function Get-Api([string]$path, [string]$method = 'Get', $payload = $null) {
             $body = Invoke-RestMethod -Method $method -Uri ($base + $path) -TimeoutSec 180 -Headers $headers `
                 -ContentType 'application/json' -Body ($payload | ConvertTo-Json -Compress)
         } else {
-            $body = Invoke-RestMethod -Method $method -Uri ($base + $path) -TimeoutSec 120 -Headers $headers
+            # a blockers scan reads many jobs (each a Quick View search unless cached)
+            $timeout = if ($path.StartsWith('/api/v1/blockers')) { 600 } else { 120 }
+            $body = Invoke-RestMethod -Method $method -Uri ($base + $path) -TimeoutSec $timeout -Headers $headers
         }
         return @{ ok = $true; status = 200; body = $body }
     } catch {
@@ -325,6 +341,16 @@ switch ($Command) {
     'runs'    { Print-Single (Job-Path $Name '/runs') }
     'jobs'    { Print-Single (Job-Path $Name '/jobs') }
     'search'  { Print-Single ('/api/v1/jobs?name=' + [uri]::EscapeDataString($Name)) }
+
+    # what keeps the jobs from starting: one call, the proxy follows conditions and boxes up to the root blockers
+    'blockers' {
+        $names = @("$Name $Url" -split '[,\s]+' | Where-Object { $_ })
+        foreach ($n in $names) {
+            if ($n -notmatch '^[A-Za-z0-9_.#-]+$') { Fail "Not a valid AutoSys job name: '$n' (letters, digits, _ . # - only)" }
+        }
+        if ($names.Count -gt 20) { Fail 'At most 20 jobs per blockers call.' }
+        Print-Single ('/api/v1/blockers?jobs=' + [uri]::EscapeDataString($names -join ',') + '&mode=' + $Mode)
+    }
 
     # changes AutoSys: run only when the user has asked for it and confirmed the job name
     'force-start' {

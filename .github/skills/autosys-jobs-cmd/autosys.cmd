@@ -3,10 +3,15 @@ rem Queries AutoSys jobs through the AutoSys proxy API and prints its JSON answe
 rem Pure cmd: needs only curl.exe (part of Windows 10 1803 and later), no PowerShell.
 rem
 rem   autosys.cmd COMMAND [NAME] [-Proxy NAME_OR_URL] [-Server SERVER] [-Status STATUS] [-Comment "text"]
+rem               [-Mode all^|root] [-Fresh]
 rem
 rem   session                       who am I, token expiry
 rem   job NAME / status NAME / deps NAME / runs NAME / jobs BOX
 rem   search "PATTERN*"             find jobs by name (wildcards * and %%)
+rem   blockers NAME [NAME...] [-Mode all^|root]
+rem                                 what keeps the jobs from starting: unready dependencies followed up through
+rem                                 conditions and boxes, root blockers first (root = only the root blockers)
+rem   -Fresh                        on reads: skip the proxy's short cache (30 s) and read AutoSys now
 rem   force-start NAME [-Comment "why"]
 rem   kill NAME [-Comment "why"]
 rem   change-status NAME -Status RUNNING^|STARTING^|SUCCESS^|FAILURE^|INACTIVE^|TERMINATED [-Comment "why"]
@@ -34,6 +39,10 @@ set "PROXY="
 set "SERVER="
 set "STATUS="
 set "COMMENT="
+set "MODE="
+set "FRESH="
+set "QUERY="
+set "QUERY2="
 
 :parse
 if "%~1"=="" goto parsed
@@ -41,8 +50,12 @@ if /i "%~1"=="-Proxy" ( set "PROXY=%~2" & shift & shift & goto parse )
 if /i "%~1"=="-Server" ( set "SERVER=%~2" & shift & shift & goto parse )
 if /i "%~1"=="-Status" ( set "STATUS=%~2" & shift & shift & goto parse )
 if /i "%~1"=="-Comment" ( set "COMMENT=%~2" & shift & shift & goto parse )
+if /i "%~1"=="-Mode" ( set "MODE=%~2" & shift & shift & goto parse )
+if /i "%~1"=="-Fresh" ( set "FRESH=1" & shift & goto parse )
 if not defined CMD ( set "CMD=%~1" & shift & goto parse )
 if not defined NAME ( set "NAME=%~1" & shift & goto parse )
+rem blockers takes several jobs (cmd splits A,B into two arguments too)
+if /i "%CMD%"=="blockers" ( set "NAME=%NAME%,%~1" & shift & goto parse )
 if not defined URLARG ( set "URLARG=%~1" & shift & goto parse )
 >&2 echo Too many arguments. Run: autosys.cmd help
 exit /b 2
@@ -63,7 +76,7 @@ set "SERVERS=%CFG%\servers.txt"
 set "TMPB=%TEMP%\aproxy-%RANDOM%%RANDOM%"
 
 set "OK="
-for %%c in (set-token session job status deps runs jobs search force-start kill change-status proxy-list proxy-add proxy-use server-use) do if /i "!CMD!"=="%%c" set "CMD=%%c" & set "OK=1"
+for %%c in (set-token session job status deps runs jobs search blockers force-start kill change-status proxy-list proxy-add proxy-use server-use) do if /i "!CMD!"=="%%c" set "CMD=%%c" & set "OK=1"
 if not defined OK goto usage
 
 rem --- which proxy
@@ -264,6 +277,22 @@ set "APIPATH=/api/v1/jobs"
 set "QUERY=name=!NAME!"
 goto get
 
+rem what keeps the jobs from starting: one call, the proxy follows conditions and boxes up to the root blockers
+:cmd_blockers
+if not defined NAME ( >&2 echo At least one job name is required: autosys.cmd blockers JOB [JOB...] [-Mode all^|root] & exit /b 2 )
+set "CHK=!NAME!"
+set "ALLOW=%JOBCHARS%,"
+call :onlychars
+if errorlevel 1 ( >&2 echo Not valid AutoSys job names: letters, digits, _ . # - only, separated by spaces or commas. & exit /b 2 )
+if not defined MODE set "MODE=all"
+set "OK="
+for %%m in (all root) do if /i "!MODE!"=="%%m" set "MODE=%%m" & set "OK=1"
+if not defined OK ( >&2 echo -Mode is all or root. & exit /b 2 )
+set "APIPATH=/api/v1/blockers"
+set "QUERY=jobs=!NAME!"
+set "QUERY2=mode=!MODE!"
+goto get
+
 :cmd_force-start
 set "ACTION=FORCE_STARTJOB"
 goto action
@@ -337,9 +366,14 @@ if "!METHOD!"=="POST" (
 ) else (
     set "QARG="
     if defined QUERY set "QARG=--data-urlencode "!QUERY!""
+    if defined QUERY2 set "QARG=!QARG! --data-urlencode "!QUERY2!""
     set "SARG="
     if not "!APIPATH!"=="/api/v1/session" set "SARG=!SRVARG!"
-    curl.exe -sS --max-time 120 -o "%TMPB%.body" -w "%%{http_code}" -H "@%TMPB%.hdr" -H "Accept: application/json" -G !QARG! !SARG! "!BASE!!APIPATH!" >"%TMPB%.code" 2>"%TMPB%.err"
+    if defined FRESH if not "!APIPATH!"=="/api/v1/session" set "SARG=!SARG! --data-urlencode "fresh=true""
+    rem a blockers scan reads many jobs (each a Quick View search unless cached)
+    set "MAXT=120"
+    if "!APIPATH!"=="/api/v1/blockers" set "MAXT=600"
+    curl.exe -sS --max-time !MAXT! -o "%TMPB%.body" -w "%%{http_code}" -H "@%TMPB%.hdr" -H "Accept: application/json" -G !QARG! !SARG! "!BASE!!APIPATH!" >"%TMPB%.code" 2>"%TMPB%.err"
 )
 del /q "%TMPB%.hdr" 2>nul
 if exist "%TMPB%.code" set /p CODE=<"%TMPB%.code"
@@ -411,7 +445,8 @@ exit /b 0
 
 :usage
 echo Usage: autosys.cmd COMMAND [NAME] [-Proxy NAME_OR_URL] [-Server SERVER] [-Status STATUS] [-Comment "text"]
-echo   session ^| job NAME ^| status NAME ^| deps NAME ^| runs NAME ^| jobs BOX ^| search "PATTERN*"
+echo   session ^| job NAME ^| status NAME ^| deps NAME ^| runs NAME ^| jobs BOX ^| search "PATTERN*"   [-Fresh]
+echo   blockers NAME [NAME...] [-Mode all^|root] [-Fresh]
 echo   force-start NAME ^| kill NAME ^| change-status NAME -Status STATUS   [-Comment "why"]
 echo   set-token [TOKEN] ^| proxy-add NAME URL ^| proxy-use NAME_OR_URL ^| proxy-list ^| server-use SERVER
 exit /b 2

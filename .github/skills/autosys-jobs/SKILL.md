@@ -1,6 +1,6 @@
 ---
 name: autosys-jobs
-description: Look up AutoSys jobs through the local AutoSys proxy API - job status, definition, run history, conditions (what a job depends on), dependents (which jobs depend on it), jobs inside a box, and multi-level dependency chains or box trees; and force-starting, killing or changing the status of a job when the user explicitly asks for it. Use when the user asks about an AutoSys job, box, its status, dependencies, dependents, runs or failures, or asks to force start, kill or change the status of a job.
+description: Look up AutoSys jobs through the local AutoSys proxy API - job status, definition, run history, conditions (what a job depends on), dependents (which jobs depend on it), jobs inside a box, and multi-level dependency chains or box trees, what blocks a job from starting (its root blockers, followed up through conditions and boxes); and force-starting, killing or changing the status of a job when the user explicitly asks for it. Use when the user asks about an AutoSys job, box, its status, dependencies, dependents, runs or failures, why a job has not started or what blocks it, or asks to force start, kill or change the status of a job.
 ---
 
 # AutoSys jobs via the AutoSys proxy
@@ -47,7 +47,7 @@ The script talks to one proxy per call, chosen by: `-Proxy NAME|URL` on the call
 Use the helper script `autosys.ps1` in this skill's directory. It prints JSON:
 
 ```powershell
-powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File <skill-dir>/autosys.ps1 <command> <JOB_NAME> [-Depth N] [-MaxJobs N] [-Server NAME]
+powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File <skill-dir>/autosys.ps1 <command> <JOB_NAME> [-Depth N] [-MaxJobs N] [-Server NAME] [-Mode all|root] [-Fresh]
 ```
 
 (`pwsh` works the same on PowerShell 7 and on macOS/Linux.) Exit code 0 = success, 1 = the API returned a
@@ -62,6 +62,7 @@ problem (printed as JSON), 2 = setup problem (message on stderr).
 | run history, previous runs, when did it last fail | `runs JOB` |
 | jobs in a box (direct children) | `jobs BOX` |
 | find jobs by name pattern, "jobs starting with X" | `search "X*"` (wildcards `*`, `%`) |
+| why hasn't JOB started, what blocks / holds up JOB, root cause, "what must finish before JOB can run" (several jobs at once: comma-separated) | `blockers JOB` or `blockers JOB1,JOB2` (`-Mode root` for only the root blockers) |
 | all jobs downstream, "everything that depends on JOB, directly or indirectly", impact of a failure | `downstream JOB [-Depth N]` |
 | full upstream chain, "everything JOB needs before it can start", root cause of a job not starting | `upstream JOB [-Depth N]` |
 | everything inside a box including nested boxes, "which jobs in BOX failed" | `tree BOX [-Depth N]` |
@@ -70,6 +71,8 @@ problem (printed as JSON), 2 = setup problem (message on stderr).
 | "kill JOB", "stop JOB" (only on an explicit request, after confirming) | `kill JOB -Comment "<reason>"` |
 | "set JOB to INACTIVE", "mark JOB as SUCCESS", "change the status of JOB" (only on an explicit request, after confirming) | `change-status JOB -Status <STATUS> -Comment "<reason>"` |
 
+To find what blocks a job, use `blockers`, not `upstream`: it is one call, it follows boxes and look-backs, and it
+lists the root blockers first. Keep `upstream` / `downstream` for showing a whole chain or the impact of a failure.
 Traversals make one API call per job (each takes a moment, because AutoSys Quick View is behind it). The
 defaults are `-Depth 5` and `-MaxJobs 100`. Start with the defaults; if the result says `"truncated": true`,
 tell the user and offer to go deeper instead of silently raising the limits a lot.
@@ -81,7 +84,8 @@ curl.exe -s -H "Authorization: Bearer %AUTOSYS_PROXY_TOKEN%" <proxy URL>/api/v1/
 ```
 
 Endpoints: `GET /api/v1/jobs/{name}`, `/{name}/status`, `/{name}/dependencies`, `/{name}/runs`,
-`/{name}/jobs`, `GET /api/v1/jobs?name=<pattern>`, `GET /api/v1/session`;
+`/{name}/jobs`, `GET /api/v1/jobs?name=<pattern>`, `GET /api/v1/blockers?jobs=A,B&mode=all|root` (also
+`/api/v1/jobs/{name}/blockers`), `GET /api/v1/session`; reads take `fresh=true`;
 `POST /api/v1/jobs/{name}/actions` with `{"action":"FORCE_STARTJOB","comment":"..."}` or
 `{"action":"CHANGE_STATUS","status":"INACTIVE","comment":"..."}`.
 
@@ -99,6 +103,18 @@ lives on one of them, and a search on the other one answers `job-not-found`.
   configured default server, else the server chosen last.
 - A `job-not-found` for a job the user is sure exists: ask which AutoSys server it is on, then retry with `-Server`.
 - For actions, name the server in the confirmation question ("Force start TEST_JOB on QA5 now?").
+
+## Fresh data
+
+The proxy keeps job reads for a short time (30 s by default), so asking about the same job twice costs no AutoSys
+search. An action through the API (force start, kill, change status) drops at once what it makes stale: the job,
+the jobs whose condition names it, and the jobs in its box. Changes made elsewhere, by the scheduler or in the
+AutoSys UI, show up when the time is up. Add `-Fresh` to read AutoSys now:
+
+- when you check again after waiting (a monitoring round, "is it done yet?");
+- right before you decide on an action.
+
+The answer's `fetchedAt` says when AutoSys was read.
 
 ## What the results mean
 
@@ -121,6 +137,28 @@ lives on one of them, and a search on the other one answers `job-not-found`.
   job) and `condition`; `edges` are `from` -> `to` meaning "`to` depends on `from`", with the condition and
   whether it is satisfied; `errors` are jobs that could not be read (e.g. a job in another AutoSys instance,
   404); `truncated` = limits reached. A job reached twice is listed once (cycles are handled).
+- **Blockers** (`blockers`): what keeps the jobs from starting, found by the proxy in one call. It follows each
+  job's condition up (further than the one level `deps` shows), and follows boxes too. A box that isn't running
+  blocks the jobs waiting in it. A started or failed box is looked into for the jobs that keep it from completing.
+  - `targets`: each job asked about, with `status`, `condition`, `nextStartTime` and `blocked`.
+  - `blockers`: every dependency that is **not ready**, in the order to complete them: **root blockers first**,
+    then the jobs waiting for them, down to the jobs asked about. Each has:
+    - `name`, `kind` (`JOB`, `BOX`, `VARIABLE`, `EXTERNAL` = another instance, `UNKNOWN` = not found or not
+      checked), `status`, `startTime`, `endTime`, `exitCode`;
+    - `root`: `true` = it waits for nothing unready, **this is where a fix starts**;
+    - `waitsFor`: its own unready dependencies;
+    - `blocks`: the jobs it holds up directly, each with the `condition` (an atom such as `s(FEED,02.00)`, or
+      `box` / `inside box`), the `reason` ("is FAILURE, needs SUCCESS", "ended ..., outside the look-back of 02.00
+      hours", "is RUNNING inside box BOX, still going ...") and `anyOf` (`true` = one of OR alternatives, any one
+      is enough);
+    - `targets`: which of the jobs asked about it holds up;
+    - `cycle`: part of a dependency loop.
+  - `-Mode root` keeps only the root blockers.
+  - `truncated: true`: the scan hit its limit (200 jobs, 30 levels); there may be more further up. Say so.
+  - The proxy checks condition types and look-backs itself, in AutoSys time (ET unless the proxy is set
+    otherwise). A `SUCCESS` outside its look-back is not ready.
+  - A `RUNNING` blocker is not followed further: it only has to finish.
+  - Global variables and jobs of other instances can't be looked into.
 - **Box tree** (`tree`): `nodes` lists each box (`box`, `depth`) with its direct `jobs` (name, type, status,
   times, exit code). Nested boxes appear both as a job of their parent and as their own node.
 
@@ -131,8 +169,8 @@ lives on one of them, and a search on the other one answers `job-not-found`.
   "A -> B -> D").
 - Mention when the data was read (`fetchedAt`) if timing matters, and that times are AutoSys server times.
 - "Which jobs failed in BOX" -> `tree BOX`, then filter jobs with `status` FAILURE or TERMINATED (and say
-  which boxes they are in). "Why hasn't JOB started" -> `deps JOB`, list the conditions that are not
-  satisfied, then follow them with `upstream` if needed.
+  which boxes they are in). "Why hasn't JOB started" / "what blocks JOB" -> `blockers JOB`: name the root
+  blockers first (with their reason), then the chain from them down to the job (`waitsFor` / `blocks`).
 - Report `errors` and `truncated` from traversals instead of leaving them out.
 
 ## Force start
@@ -190,6 +228,7 @@ The API returns `application/problem+json` with `type` and `detail`:
 | 409 `not-a-box` | `jobs` / `tree` on a regular job: answer with `job` instead. |
 | 409 `autosys-action-rejected`, 502 `autosys-action-unknown` | See [Force start](#force-start). |
 | 400 `unknown-server` | The user has no AutoSys server with that name; `detail` lists the ones Quick View offers. Ask which one. |
+| 400 `invalid-mode`, `too-many-jobs` | `blockers` with a `-Mode` other than `all` / `root`, or more than 20 jobs at once. |
 | 400 `invalid-status` | `change-status` without a valid `-Status` (or `-Status` given to another action). |
 | 429 `rate-limited` | Too many actions in a minute: wait, do not loop. |
 | 403 `actions-disabled` | Actions are switched off on this proxy. |

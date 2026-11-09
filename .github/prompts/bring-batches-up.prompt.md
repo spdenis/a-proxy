@@ -27,18 +27,42 @@ the start of every round. Do not guess the time.
 
 Repeat these rounds:
 
-1. **Check the state.** Read the top-level box of every batch in scope (`tree BOX` or `status BOX`), with fresh
+1. **Check the state.** Read the top-level box of every batch in scope (`status BOX -Fresh`), with fresh
    data every round. A batch is *done* when its top-level box is `SUCCESS` **for today's run**, or it is not
    due today (not a run day, or its start time is still ahead). A `SUCCESS` from an earlier day on a run day
    whose start time has passed is **not** done: it missed today's run and must catch up (see "judge today's run"
    in your agent definition). Get the current time from the terminal every round.
 2. **Stop if** all batches are done, or the time limit is reached, or the user says stop. Go to
    [Final report](#final-report).
-3. **Find the root jobs.** For every batch that is not done, find the job that actually blocks it: the earliest
-   failed, terminated or stuck job, including conditions on its boxes and upstream feeds. Skip batches that are
-   only waiting on a root job you already found, and ones that are simply running normally.
-4. **Act** on each root job (see [What you may do](#what-you-may-do)), most urgent cut-off first
-   (`knowledge/regions.md`).
+3. **Find the root jobs: always start with the incomplete-dependencies call.** In one call, ask for what keeps
+   every batch that is not done from completing: `blockers BOX1,BOX2,... -Mode all -Fresh`, with the top-level
+   boxes, or the jobs that missed their run. The proxy follows the conditions up through every level, and the
+   boxes too, including look-backs and the jobs inside a started or failed box. It lists every unready dependency
+   with the **root blockers first**.
+   - The **root blockers** (`root: true`) are the jobs that break the job sequence: they wait for nothing unready
+     themselves, and everything after them waits for them. Fixing starts with them, and only with them.
+   - Jobs that are not roots only wait, in the order the list gives (`waitsFor` / `blocks`). Do not act on them:
+     they move once their roots are fixed.
+   - Several batches stuck behind one root show it once, with all of them in its `targets`: fix it once.
+   - Then gather the evidence for each root only: `job`, `runs`, its `deps`, and the sync job when it is a feed.
+     Use `upstream` / `tree` only if `blockers` answers `truncated: true` or you need to show more of the chain.
+   - Skip batches whose only blockers are `RUNNING` and within their usual run time (compare with `runs`): they
+     are progressing.
+4. **Fix each root blocker with the runbook**, most urgent cut-off first (`knowledge/regions.md`), within
+   [What you may do](#what-you-may-do). Each root's `blocks[].reason` and `condition` say how the dependency
+   failed. Match that failure to its case in `knowledge/known-failures.md` (and `upstream-feeds.yaml` for
+   loaders and file watchers), name the case, and fix it as that case says. For example:
+   - `is FAILURE` / `is TERMINATED, needs SUCCESS`: the case for that job and exit code. Without one, the
+     one-off failure rule.
+   - `outside the look-back of ...`: the dependency's last good run is too old. Catch up its run for today,
+     after checking it has no blockers of its own (it is a root).
+   - `its box ... is ..., not running`: the box's own case, or catch up the box's missed run.
+   - A feed loader or file watcher: the sync job, as described in your agent definition.
+   - `ON_HOLD`, a `VARIABLE`, an `EXTERNAL` or `UNKNOWN` blocker, or no runbook case: do not improvise. It is a
+     proposal or **needs a human**, with the evidence.
+
+   After fixing roots, do not fix the jobs that waited for them. The next round's `blockers` call shows whether
+   they moved and which roots, if any, come next.
 5. **Report progress** in a few lines: round number, time used / limit, batches done / total, what you did this
    round, and what you are waiting for.
 6. **Wait** before the next round if you only have running jobs to watch: about 2 minutes
@@ -55,8 +79,8 @@ Do not give up on a blocked batch after the first idea. Before you call a job *s
 - **Read everything about it:** `job` (definition, command, machine, run days), `deps` of the job **and of every
   box above it**, `runs` (did it work before? how did the last good run differ?), and the status of every job in
   its conditions.
-- **Follow the chain.** A blocker is often several levels up: use `upstream`, then add the box levels by hand.
-  Fix the earliest one; the rest usually follow.
+- **Follow the chain.** A blocker is often several levels up. `blockers` follows it for you, boxes and
+  look-backs included, and puts the root first: fix the roots; the rest usually follow.
 - **Check the feeds.** For every loader or file watcher on the path, check the sync job in
   `knowledge/upstream-feeds.yaml`.
 - **Compare UAT and QA.** If a job works in one environment and not in the other, compare their definitions and
@@ -88,7 +112,8 @@ Limits:
 - At most **2 force-starts per job** in a run. After that it needs a human.
 - Only jobs in the environment(s) and regions in scope, and only through the `autosys-jobs` skill.
 - Never force-start a job whose own or box conditions are not satisfied, just to skip what it waits for, unless the
-  runbook says so for that case.
+  runbook says so for that case. In `blockers` terms: act on root blockers only, never on a job that still
+  `waitsFor` something.
 - After a force-start, never retry an `UNKNOWN` outcome: check the status in the next round instead.
 - Anything else (kill, hold, ice, changing a definition, a job outside the scope, a 3rd force-start) is not
   approved: put it in the final report as a proposal.

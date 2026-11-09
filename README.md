@@ -437,7 +437,8 @@ never-retried rule after OK are as for force start. Settings: `autosys.webui.qui
 ## Copilot skill
 
 `.github/skills/autosys-jobs/` is an agent skill for GitHub Copilot: ask Copilot things like "give me the
-dependencies of MY_JOB", "which jobs depend on MY_JOB, also indirectly" or "which jobs in MY_BOX failed", and it
+dependencies of MY_JOB", "why hasn't MY_JOB started", "which jobs depend on MY_JOB, also indirectly" or "which jobs
+in MY_BOX failed", and it
 calls the job API through `autosys.ps1` (PowerShell) and answers from the result.
 
 - Copilot finds it in this repository; to use it from any workspace, copy the folder to `~/.copilot/skills/`.
@@ -447,8 +448,10 @@ calls the job API through `autosys.ps1` (PowerShell) and answers from the result
   including Copilot's own terminals. (`AUTOSYS_PROXY_TOKEN`, if set, takes precedence; `AUTOSYS_PROXY_URL` if the
   proxy is not on `http://localhost:8080`.)
 - The script works on its own too: `powershell -NoProfile -ExecutionPolicy Bypass -File autosys.ps1 downstream MY_JOB -Depth 3`.
-  Commands: `job`, `status`, `deps`, `runs`, `jobs`, `search`, `downstream`, `upstream`, `tree`, `session`,
-  `force-start` (Copilot runs it only when you ask to force start a job, after you confirm the job name).
+  Commands: `job`, `status`, `deps`, `runs`, `jobs`, `search`, `blockers` (what keeps jobs from starting, root
+  blockers first; `-Mode root`), `downstream`, `upstream`, `tree`, `session`, `force-start`, `kill`,
+  `change-status` (Copilot runs actions only when you ask, after you confirm the job name). Add `-Fresh` to a read
+  to skip the proxy's short cache. `.github/skills/autosys-jobs-cmd/` is the same skill for plain cmd (`autosys.cmd`).
 
 ## Capture mode: record the AutoSys UI's internal requests
 
