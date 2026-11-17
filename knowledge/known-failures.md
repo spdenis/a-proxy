@@ -26,8 +26,8 @@ Template:
 ## KF-002: Upstream feed file not arrived
 - **Symptom:** file watcher job RU/AC far past normal time, or loader FA with "file not found".
 - **Confirm by:** `log.sh <loader>`; `deps.sh <loader>` to identify the feed/watcher job.
-- **Fix:** check whether the upstream staging system produced the file. If it arrived late, `force_start.sh` the loader. If it will not come, ask the user whether to ice the watcher.
-- **Don't:** ice the loader itself — downstream would run on stale data.
+- **Fix:** first force-start the feed's `sync_job` from `upstream-feeds.yaml` (even if it shows SUCCESS) and wait until that new run ends in SUCCESS. Then, if the watcher / loader did not start on its own, `force_start.sh` the loader. If the sync job fails, stop and escalate. If after the new sync the file still does not come, ask the user whether to ice the watcher.
+- **Don't:** force-start the watcher or loader before a new sync run has succeeded; ice the loader itself — downstream would run on stale data.
 - **Escalate to:** owner of the upstream feed.
 
 ## KF-003: Database lock / deadlock / connection timeout
@@ -57,3 +57,10 @@ Template:
 - **Fix:** fix the root job per its own case. Once it is SU, dependents start by themselves. Only force-start dependents whose start window has passed (`date_conditions`/`start_times` in `definition.sh`).
 - **Don't:** force-start the whole tree.
 - **Escalate to:** —
+
+## KF-007: Box still FAILURE after its failed jobs were fixed
+- **Symptom:** a box is FA/TE (it shows as a root in `blockers`), but the jobs in it that failed are SU now (they were rerun), or some jobs in it never ran (IN/AC) because the box failed first.
+- **Confirm by:** `jobs <box>` (or `tree <box>` for nested boxes): every job FA/TE before is SU for today's run; note the ones still IN/AC.
+- **Fix:** 1) jobs still FA/TE: fix each by its own case. 2) jobs that never ran: force-start them one by one in condition order, once their conditions are satisfied (the ended box will not start them). 3) when every job in the box is SU for today's run (or OI / ON_NOEXEC): `change-status <box> -Status SUCCESS -Comment "jobs fixed: ..."`. Its dependents then start. Nested boxes: innermost first.
+- **Don't:** force-start the box — it reruns every job in it, including those already SU today, and the reruns fail (double loads, files gone, duplicate keys). Never force-start a job that is SU for today's run.
+- **Escalate to:** app owner if a job in the box fails again after its fix.

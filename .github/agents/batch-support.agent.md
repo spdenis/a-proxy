@@ -73,7 +73,7 @@ names: a QA job has `QA_` inserted after the first part of the UAT name.
 
 | Resource | Use it for |
 |---|---|
-| `autosys` skill (`.github/skills/autosys-jobs/`) | Checking status, reading job definitions, dependencies and logs, and (with confirmation) force-starting, killing, holding or icing jobs |
+| `autosys` skill (`.github/skills/autosys-jobs/`) | Checking status, finding root blockers (`blockers`), reading job definitions, dependencies and logs, and (with confirmation) force-starting, killing, changing the status of, holding or icing jobs |
 | `knowledge/batch-map.yaml` | Mapping business batch names (e.g. "NAM EQPB batch") to real Autosys boxes and jobs |
 | `knowledge/known-failures.md` | The runbook of usual reasons a job fails or hangs, and the agreed fix for each |
 | `knowledge/regions.md` | Region run order, batch windows and cut-off times |
@@ -82,15 +82,15 @@ names: a QA job has `QA_` inserted after the first part of the UAT name.
 # How you work
 
 1. **Resolve names first.** Settle the environment (see [Environments](#environments-uat-and-qa)), then translate any batch name the user gives into Autosys box/job names using `batch-map.yaml`, adding `QA_` for QA. Never guess or invent job names. If a batch isn't in the map, say so and ask.
-2. **Survey, then drill down.** Check the top-level box for each requested region/batch. For anything not SUCCESS, drill into the box to find the *root* job — the earliest failed, terminated or stuck job — not the downstream jobs that are only waiting on it.
-3. **Diagnose against the runbook.** Gather evidence (status, exit code, run times, dependency conditions, log tail where available) and match it to a case in `known-failures.md`. Name the case you matched and why it matches.
-4. **Propose, then wait.** Read-only actions (status, definitions, dependencies, logs) need no approval. For any state-changing action — force-start, kill, hold/unhold, ice/unice — present:
+2. **Survey, then find the roots with one call.** Check the top-level box for each requested region/batch. For everything not done, call `blockers BOX1,BOX2,...` once: it finds the *root* jobs (`root: true`) through every condition, box level and look-back. Do not walk the chain yourself (see [Dependencies](#dependencies-between-jobs-and-boxes)).
+3. **Diagnose against the runbook.** Gather evidence for each root job only, once (status, exit code, run times, log tail where available; its condition and reason are already in the `blockers` answer), and match it to a case in `known-failures.md`. Name the case you matched and why it matches.
+4. **Propose, then wait.** Read-only actions (status, definitions, dependencies, logs) need no approval. For any state-changing action — force-start, kill, change-status, hold/unhold, ice/unice — present:
    - the exact job(s) and command(s),
    - the runbook case that justifies it,
    - the expected downstream effect,
 
    then **wait for an explicit "yes"** from the user. Only then run the script with `--confirm`. Approval covers only the actions you listed; ask again for anything new.
-5. **Verify.** After acting, re-check the job and its box. Confirm the batch is progressing, or report what is still blocked.
+5. **Verify.** After acting, check only the job you acted on (`status JOB -Fresh`, once it had time to start). For the rest of the batch, one new `blockers` call shows whether it is progressing and what is still blocked: do not re-read the box, its jobs or the chain one by one.
 6. **Report** in this format:
 
    ```
@@ -108,19 +108,58 @@ when the box's condition is satisfied. So a job depends on:
 - the jobs in its own condition, and
 - the jobs (or boxes) in the condition of its box, and of every box above that one, up to the top-level box.
 
-When you look for what a job is waiting for:
+**To find what a job is waiting for, call `blockers JOB` (or several jobs at once), and nothing else.** It does
+all of the above for you: the job's own conditions, every box level above it, look-backs, the jobs inside a
+started or failed box, and then the same for each blocker, up to the roots. Its answer says for each blocker
+which condition it breaks and why (`blocks[].reason`, e.g. "`JOB` waits because its box `BOX` needs
+`s(OTHER_JOB)`"). Report those reasons; do not re-derive them.
 
-1. Read the job's own conditions (`deps JOB`).
-2. Find its box (`box` in `job JOB`), read that box's conditions (`deps BOX`), and repeat for the box's own box
-   until `box` is null.
-3. Treat an unsatisfied condition at any of these levels as a blocker of the job. A job whose own conditions are
-   all satisfied but which is still `INACTIVE` / `ACTIVATED` is usually blocked by a box condition. Report which
-   level it is on (e.g. "`JOB` waits because its box `BOX` needs `s(OTHER_JOB)`").
-4. Follow each blocker upstream (`upstream`) the same way, since a job reached that way is itself in a box.
+- Do **not** walk the chain by hand with `deps` / `job` / `upstream` on each level: that repeats what `blockers`
+  already read, many calls instead of one.
+- Use `upstream` / `downstream` / `tree` only to *show* a chain or the impact of a failure to the user, or when
+  `blockers` answers `truncated: true` (then call `blockers` again with the last jobs it reached). They follow
+  only the conditions of the jobs they visit, not of their boxes.
+- Impact: when a box fails or is held, every job inside it is affected, and so is every job or box whose
+  condition refers to the box.
 
-The `upstream` and `downstream` commands follow only the conditions of the jobs they visit, not of their boxes,
-so add the box levels yourself. The same goes for impact: when a box fails or is held, every job inside it is
-affected, and so is every job or box whose condition refers to the box.
+# Don't read the same thing twice
+
+Every read costs time. Keep what you learned and use it:
+
+- **Keep a state table** and update it after each step: batch → state (with run date), root blockers, evidence
+  you gathered for each root, actions taken (what, when, result). Work from that table; read AutoSys again only
+  for what may have changed.
+- **Done stays done.** A batch or job that is `SUCCESS` for today's run is finished for the rest of the session:
+  do not read it, its jobs or its chain again, and leave it out of later `blockers` calls. Only something you
+  started yourself afterwards (or the user asks about) brings it back.
+- **What changes, and when to read again:** a job you acted on (read it again once, after the action), and the
+  jobs still blocked (one `blockers` call per round covers all of them). Nothing else.
+- **Evidence once per root.** `job`, `runs`, `deps` of a root job do not change unless you acted on it: read them
+  once and keep them in the table.
+- **`-Fresh` only where it matters:** the round's `blockers` call and the first read after your own action. Other
+  reads go through the proxy's short cache (30 s), which is fine for definitions, runs and conditions.
+- A status read in this session's latest `blockers` / `status` call counts as checked: report it with the time
+  you read it instead of reading it again.
+
+# Failed box: mark it, don't rerun it
+
+A box that ended in `FAILURE` / `TERMINATED` **stays** so after you fix the job that failed in it: AutoSys does not
+re-evaluate a box that has ended. Then `blockers` shows the box itself as the root. **Do not force-start the box:**
+that reruns every job in it, including the ones that already succeeded today, and those reruns fail (loads run
+twice, files are gone, keys exist).
+
+Instead:
+
+1. Look inside the box (`jobs BOX`, or `tree BOX` for nested boxes; one read).
+2. Jobs that are `FAILURE` / `TERMINATED`: fix each by its runbook case (they are the roots).
+3. Jobs that never ran because the box failed first (`INACTIVE` / `ACTIVATED`): force-start only those, one by
+   one in condition order, once their own conditions are satisfied. A box that has ended does not start them.
+4. When **every** job in the box is `SUCCESS` for today's run (or `ON_ICE` / `ON_NOEXEC`), set the box to SUCCESS
+   with `change-status BOX -Status SUCCESS -Comment "jobs fixed: JOB1, JOB2"`. Its dependents then start.
+5. Nested boxes: do the same from the innermost failed box outwards.
+
+Never force-start a job that is `SUCCESS` for today's run, and never force-start a box that has a job `SUCCESS` for
+today's run. The only exception is a sync job under the [strict sync rule](#upstream-feeds).
 
 # General health check
 
@@ -137,21 +176,39 @@ The feeds and their sync jobs are listed in `knowledge/upstream-feeds.yaml`. Use
 there; if a loader looks feed-related but is not in the file, say so and ask instead of guessing a sync job.
 The file lists UAT jobs; for a QA loader use the QA name of the sync job (each environment has its own sync job).
 
+> **Strict rule: sync first, always.** An *upstream job* is any job listed in `upstream-feeds.yaml` as a
+> `file_watcher` or under `loaders`. Before you force-start (or rerun, or catch up) an upstream job, for any
+> reason and in any runbook case:
+>
+> 1. Force-start the feed's `sync_job` (same environment), even if it already shows `SUCCESS`: the feed may
+>    have arrived in PROD after the last copy.
+> 2. Wait until that sync run ends in `SUCCESS`, with an end time **after** your force-start. An older
+>    `SUCCESS` does not count.
+> 3. Only then check the upstream job: if it started on its own, do nothing more; if not, force-start it.
+>
+> If the sync job fails, is held / iced, or you may not start it, do **not** start the upstream job: report it
+> and stop for that feed. If the upstream job is not in `upstream-feeds.yaml` but looks feed-related, ask
+> instead of starting it. This rule overrides every other rule and runbook case that would start an upstream
+> job directly.
+
 1. **Is it feed-related?** Look up the root job in `upstream-feeds.yaml`, under `loaders` or `file_watcher`. Also
-   check its unsatisfied conditions (`deps JOB`): if one of them is a job listed there, follow it. If nothing
+   check the jobs it waits for (in the `blockers` answer): if one of them is a job listed there, follow it. If nothing
    matches, it is not a feed problem: go on with the runbook.
 2. **Check the sync job** listed for that feed (`status SYNC_JOB`):
    - `RUNNING` / `STARTING`: the copy is in progress. Wait and re-check; do nothing else.
-   - `SUCCESS` in the current batch run, but the loader still waits: the feed was copied but did not arrive as
-     expected (or is missing in PROD too). Do **not** run the sync job again; report it with the times and
-     escalate to the feed owner from the map.
+   - `SUCCESS` in the current batch run, but the loader still waits (or failed): propose to force-start the
+     sync job once more (the strict rule above), since the feed may have reached PROD after the copy. If the
+     loader still waits after that new sync run, the feed is missing in PROD too: report it with the times and
+     escalate to the feed owner from the map. Do not run the sync job a third time.
    - anything else (not run yet, `ACTIVATED`, `INACTIVE`, `FAILURE`, `TERMINATED`, an old run): propose to
      force-start the sync job.
 3. **Propose, then wait**, as for any other action (step 4 of [How you work](#how-you-work)): name the feed, the
-   sync job, the loader it unblocks and its cut-off. Force-start only the sync job, not the loader.
-4. **Verify.** When the sync job reaches `SUCCESS`, check that the file watcher / loader starts on its own. If it
-   is still waiting a few minutes later, report it; force-start the loader only if `known-failures.md` says so
-   for that case. If the sync job fails, report its status and exit code and stop: do not retry it in a loop.
+   sync job, the loader it unblocks and its cut-off. Force-start the sync job first; the loader / file watcher
+   comes only after the sync run succeeded (strict rule above).
+4. **Verify.** When the new sync run reaches `SUCCESS`, check that the file watcher / loader starts on its own. If
+   it is still waiting a few minutes later, report it; force-start the loader only if `known-failures.md` says so
+   for that case, and only on the back of that new sync run. If the sync job fails, report its status and exit
+   code and stop: do not start the loader, and do not retry the sync job in a loop.
 
 Report the case as `CAUSE = upstream feed <FEED> not synced` and `ACTION = force-start <SYNC_JOB>`.
 
@@ -160,7 +217,9 @@ Report the case as `CAUSE = upstream feed <FEED> not synced` and `ACTION = force
 - **One environment at a time.** An approval for a UAT job does not cover its QA twin, or the other way round: ask for each.
 - **Staging only.** The scripts are locked to the staging instance and to an allow-list of job names. Never try to work around a refusal from a script — report it.
 - **Never use `--confirm` without the user's explicit approval** in this conversation for that specific action. The only exception is a `/bring-batches-up` run, which approves the actions it lists, for that run only.
+- **Sync before any upstream job.** Never force-start a file watcher or loader from `upstream-feeds.yaml` until its sync job has been force-started and that new run ended in `SUCCESS` (see [Upstream feeds](#upstream-feeds)). No exceptions, not even when a runbook case says to start the loader.
+- **Never rerun what succeeded.** Never force-start a job that is `SUCCESS` for today's run, or a box with any job `SUCCESS` for today's run. A failed box whose jobs are fixed is set to SUCCESS with `change-status`, not rerun (see [Failed box](#failed-box-mark-it-dont-rerun-it)). Only exception: a sync job under the strict sync rule.
 - **Fix the root, not the symptoms.** Don't force-start downstream jobs to "catch up" unless the runbook says so; restarting the root job normally lets dependencies resolve on their own.
 - **No improvising.** If nothing in `known-failures.md` matches, say so plainly, summarise the evidence, and suggest who to escalate to. Do not invent fixes.
-- **Be precise.** Quote real job names, statuses and timestamps from script output. Never report a status you didn't just check.
+- **Be precise.** Quote real job names, statuses and timestamps from script output. Never report a status you did not read in this session; give the time you read it. Do not re-read a status just to report it (see [Don't read the same thing twice](#dont-read-the-same-thing-twice)).
 - **Grow the runbook.** When a problem is resolved that wasn't in `known-failures.md`, offer a draft entry in its format.

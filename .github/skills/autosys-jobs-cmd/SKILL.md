@@ -202,6 +202,9 @@ whose conditions wait for that).
   FAILURE to INACTIVE now?"); run it once; never retry `UNKNOWN`.
 - Before setting `SUCCESS`, `FAILURE` or `TERMINATED`, also show what depends on the job (`deps JOB`, its
   `dependents`) and say that they may start.
+- **A failed box whose jobs are fixed** is set to `SUCCESS` with `change-status`, never force-started: a force start
+  reruns every job in the box, including those that already succeeded today. Set it only when every job in the box
+  is `SUCCESS` for today's run (`jobs BOX`).
 - The result has `status`, `event` and `autosysMessage` (what AutoSys said afterwards); report `statusAfter`.
   `REJECTED` with "offers no status ..." means that status is not available for that job.
 

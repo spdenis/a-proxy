@@ -27,11 +27,13 @@ the start of every round. Do not guess the time.
 
 Repeat these rounds:
 
-1. **Check the state.** Read the top-level box of every batch in scope (`status BOX -Fresh`), with fresh
-   data every round. A batch is *done* when its top-level box is `SUCCESS` **for today's run**, or it is not
-   due today (not a run day, or its start time is still ahead). A `SUCCESS` from an earlier day on a run day
-   whose start time has passed is **not** done: it missed today's run and must catch up (see "judge today's run"
-   in your agent definition). Get the current time from the terminal every round.
+1. **Check the state of the batches not done yet.** Read the top-level box (`status BOX -Fresh`) of each batch
+   that is **not** in your *done* list; never read a done batch again. A batch is *done* when its top-level box
+   is `SUCCESS` **for today's run**, or it is not due today (not a run day, or its start time is still ahead —
+   that one comes back when its start time passes). A `SUCCESS` from an earlier day on a run day whose start time
+   has passed is **not** done: it missed today's run and must catch up (see "judge today's run" in your agent
+   definition). Move each newly done batch to the *done* list. Get the current time from the terminal every
+   round.
 2. **Stop if** all batches are done, or the time limit is reached, or the user says stop. Go to
    [Final report](#final-report).
 3. **Find the root jobs: always start with the incomplete-dependencies call.** In one call, ask for what keeps
@@ -44,8 +46,11 @@ Repeat these rounds:
    - Jobs that are not roots only wait, in the order the list gives (`waitsFor` / `blocks`). Do not act on them:
      they move once their roots are fixed.
    - Several batches stuck behind one root show it once, with all of them in its `targets`: fix it once.
-   - Then gather the evidence for each root only: `job`, `runs`, its `deps`, and the sync job when it is a feed.
-     Use `upstream` / `tree` only if `blockers` answers `truncated: true` or you need to show more of the chain.
+   - Then gather the evidence for each **new** root only, once: `job`, `runs`, and the sync job when it is a
+     feed (without `-Fresh`). Its conditions and why they are not met are already in the `blockers` answer: do
+     not call `deps` / `upstream` on it or on the jobs it waits for. A root you already have evidence for is not
+     read again unless you acted on it. Use `upstream` / `tree` only if `blockers` answers `truncated: true`.
+   - Never call `status` on a job that the `blockers` answer already lists: its status is in the answer.
    - Skip batches whose only blockers are `RUNNING` and within their usual run time (compare with `runs`): they
      are progressing.
 4. **Fix each root blocker with the runbook**, most urgent cut-off first (`knowledge/regions.md`), within
@@ -57,7 +62,11 @@ Repeat these rounds:
    - `outside the look-back of ...`: the dependency's last good run is too old. Catch up its run for today,
      after checking it has no blockers of its own (it is a root).
    - `its box ... is ..., not running`: the box's own case, or catch up the box's missed run.
-   - A feed loader or file watcher: the sync job, as described in your agent definition.
+   - A **box in `FAILURE` / `TERMINATED`** (as a root, or after you fixed the jobs that failed in it): **never
+     force-start it**, that reruns the jobs that already succeeded and they fail. Follow "Failed box: mark it,
+     don't rerun it" in your agent definition: fix the failed jobs, force-start only the jobs that never ran,
+     then `change-status BOX -Status SUCCESS` once every job in it is `SUCCESS` for today (KF-007).
+   - A feed loader or file watcher: the sync job first, always (see the strict rule below).
    - `ON_HOLD`, a `VARIABLE`, an `EXTERNAL` or `UNKNOWN` blocker, or no runbook case: do not improvise. It is a
      proposal or **needs a human**, with the evidence.
 
@@ -69,16 +78,18 @@ Repeat these rounds:
    (`Start-Sleep -Seconds 120`), less if something is about to finish, never longer than the time left. Do not
    wait when you still have something to do.
 
-Keep a list of everything you have tried for each job (what, when, result) and use it every round: never repeat an
-action that already failed in the same way.
+Keep a **state table** and update it every round (see "Don't read the same thing twice" in your agent
+definition): the *done* list, each root with its evidence and runbook case, and everything you have tried for each
+job (what, when, result). Work from it: read again only the batches not done, the round's `blockers` call, and the
+jobs you acted on. Never repeat an action that already failed in the same way.
 
 ## Be persistent and smart
 
 Do not give up on a blocked batch after the first idea. Before you call a job *stuck*, work through these:
 
-- **Read everything about it:** `job` (definition, command, machine, run days), `deps` of the job **and of every
-  box above it**, `runs` (did it work before? how did the last good run differ?), and the status of every job in
-  its conditions.
+- **Read everything about it, once:** `job` (definition, command, machine, run days) and `runs` (did it work
+  before? how did the last good run differ?). Its conditions, its boxes' conditions and the status of every job in
+  them are already in the `blockers` answer: use those, do not read them again one by one.
 - **Follow the chain.** A blocker is often several levels up. `blockers` follows it for you, boxes and
   look-backs included, and puts the root first: fix the roots; the rest usually follow.
 - **Check the feeds.** For every loader or file watcher on the path, check the sync job in
@@ -91,14 +102,15 @@ Do not give up on a blocked batch after the first idea. Before you call a job *s
   `v(NAME)` global variable.
 
 Only when all of these are done, and nothing you may do would help, mark the job as **needs a human**, with the
-evidence and who to ask, and go on with the other batches. Re-check it in later rounds in case it moved.
+evidence and who to ask, and go on with the other batches. Do not read it again yourself: if it moves, the
+round's `blockers` call shows it.
 
 ## What you may do
 
 Starting this command is the user's approval, for this run only, of these actions without asking again:
 
 - **Force-start a sync job** from `knowledge/upstream-feeds.yaml` (in the environment in scope) when the feed's
-  loader waits for it, as described in the agent definition.
+  loader waits for it, or before starting any of its upstream jobs, as described in the agent definition.
 - **Force-start a job when `known-failures.md` says so** for the case you matched.
 - **Catch up a missed run:** force-start a box or job that was scheduled today, whose start time has passed and
   which has not started, once its own and its boxes' conditions are satisfied (and it is not `ON_HOLD` /
@@ -106,17 +118,32 @@ Starting this command is the user's approval, for this run only, of these action
 - **Force-start a failed or terminated root job** once, when the evidence points to a one-off failure (it ran
   fine before with the same definition, its conditions are satisfied, and nothing suggests the same failure will
   happen again). Say why you think so.
+- **Mark a failed box SUCCESS** (`change-status BOX -Status SUCCESS -Comment "jobs fixed: ..."`) when every job in
+  it is `SUCCESS` for today's run (or `ON_ICE` / `ON_NOEXEC`), after you fixed the ones that failed (KF-007). Only
+  boxes, only to `SUCCESS`, only in that case.
+- **Force-start the jobs of a failed box that never ran** (`INACTIVE` / `ACTIVATED` because the box failed first),
+  one by one in condition order, once their own conditions are satisfied.
 
 Limits:
 
+- **Never rerun what succeeded.** Never force-start a job that is `SUCCESS` for today's run, and never force-start
+  a box that has any job `SUCCESS` for today's run: mark the box instead (above). Only exception: a sync job under
+  the strict sync rule below.
+
+- **Strict: sync before any upstream job.** Before you force-start any file watcher or loader listed in
+  `upstream-feeds.yaml` (for whatever reason: a runbook case, a one-off failure, a missed run), force-start its
+  sync job, even if it shows `SUCCESS`, and wait until that new run ends in `SUCCESS` (end time after your
+  force-start). Only then start the upstream job, and only if it did not start on its own. If the sync job fails
+  or cannot be started, do not start the upstream job: it **needs a human**. A sync run done for this counts
+  toward the sync job's 2 force-starts.
 - At most **2 force-starts per job** in a run. After that it needs a human.
 - Only jobs in the environment(s) and regions in scope, and only through the `autosys-jobs` skill.
 - Never force-start a job whose own or box conditions are not satisfied, just to skip what it waits for, unless the
   runbook says so for that case. In `blockers` terms: act on root blockers only, never on a job that still
   `waitsFor` something.
 - After a force-start, never retry an `UNKNOWN` outcome: check the status in the next round instead.
-- Anything else (kill, hold, ice, changing a definition, a job outside the scope, a 3rd force-start) is not
-  approved: put it in the final report as a proposal.
+- Anything else (kill, hold, ice, any other status change, changing a definition, a job outside the scope, a 3rd
+  force-start) is not approved: put it in the final report as a proposal.
 
 ## Final report
 
