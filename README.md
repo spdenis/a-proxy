@@ -94,7 +94,9 @@ The token stays valid until it is revoked (`DELETE /api/v1/sessions/current`) or
 kept in memory only). Logging in again through the proxy as the same user gives a new token, and the earlier
 tokens keep working with the new login (`autosys.token.keep-on-relogin`, on by default; `false` = the new login
 replaces the previous token). So when the browser has to log in again, for example after a switch to another AutoSys
-server, scripts do not need a new token. When AutoSys drops its own session, the proxy logs in again by itself with
+server, scripts do not need a new token. This also holds when the earlier token has expired for lack of use
+(`idle-ttl`), e.g. because AutoSys could not be reached for a while: the next login of the same user brings it back.
+Revoked tokens and tokens past `absolute-ttl` stay invalid. When AutoSys drops its own session, the proxy logs in again by itself with
 the captured credentials (the password is kept encrypted in memory) and the token does not change.
 
 If an AutoSys server refuses that login (a server that is shutting down may answer the login with an error), the

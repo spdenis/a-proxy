@@ -94,6 +94,63 @@ class SessionRegistryTest {
     }
 
     @Test
+    void aNewLoginBringsBackTokensThatExpiredIdle() {
+        // e.g. AutoSys was down for longer than the idle TTL, so nothing used the token
+        var first = registry.create("alice", "pw".toCharArray(), null);
+        var second = registry.create("alice", "pw2".toCharArray(), null);
+        var other = registry.create("bob", "pw".toCharArray(), null);
+        var notYetUsed = registry.create("dave", "pw".toCharArray(), null);
+        clock.advance(Duration.ofHours(9));
+        // expired, but not looked at before the next login
+        var dave = registry.create("dave", "pw2".toCharArray(), null);
+        assertThat(registry.authenticate(notYetUsed.token(), null)).containsSame(dave.session());
+        assertThat(registry.authenticate(first.token(), null)).isEmpty();
+        assertThat(registry.authenticate(second.token(), null)).isEmpty();
+        assertThat(registry.whyRejected(first.token())).contains("without use", "works again");
+
+        var third = registry.create("alice", "pw3".toCharArray(), null);
+
+        for (var token : new String[] {first.token(), second.token(), third.token()}) {
+            assertThat(registry.authenticate(token, null)).containsSame(third.session());
+        }
+        // another user's tokens stay with that user
+        assertThat(registry.authenticate(other.token(), null)).isEmpty();
+        registry.create("bob", "pw".toCharArray(), null);
+        assertThat(registry.authenticate(other.token(), null)).isPresent()
+                .get().extracting(ProxySession::username).isEqualTo("bob");
+    }
+
+    @Test
+    void aNewLoginDoesNotBringBackRevokedOrAbsolutelyExpiredTokens() {
+        var revoked = registry.create("alice", "pw".toCharArray(), null);
+        registry.revoke(revoked.session());
+        var aged = registry.create("carol", "pw".toCharArray(), null);
+        for (int i = 0; i < 5; i++) {
+            clock.advance(Duration.ofHours(5));
+            registry.authenticate(aged.token(), null);
+        }
+        assertThat(registry.whyRejected(aged.token())).contains("at most");
+
+        registry.create("alice", "pw2".toCharArray(), null);
+        registry.create("carol", "pw2".toCharArray(), null);
+
+        assertThat(registry.authenticate(revoked.token(), null)).isEmpty();
+        assertThat(registry.authenticate(aged.token(), null)).isEmpty();
+    }
+
+    @Test
+    void withoutKeepOnReloginIdleTokensStayExpired() {
+        var replacing = new SessionRegistry(properties(Duration.ofHours(8), Duration.ZERO, false), vault,
+                new TokenService(), new AuditLogger(), clock);
+        var issued = replacing.create("alice", "pw".toCharArray(), null);
+        clock.advance(Duration.ofHours(9));
+        replacing.create("alice", "pw2".toCharArray(), null);
+
+        assertThat(replacing.authenticate(issued.token(), null)).isEmpty();
+        assertThat(replacing.whyRejected(issued.token())).contains("for a new token");
+    }
+
+    @Test
     void withoutKeepOnReloginTheNewLoginReplacesTheToken() {
         var replacing = new SessionRegistry(properties(Duration.ZERO, Duration.ZERO, false), vault,
                 new TokenService(), new AuditLogger(), clock);

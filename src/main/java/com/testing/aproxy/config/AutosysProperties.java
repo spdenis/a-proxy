@@ -187,6 +187,8 @@ public record AutosysProperties(
             /*
              * A new login of the same user through the proxy keeps the earlier token working (as well as the new
              * one), so scripts go on after the browser had to log in again; false = the new login replaces it.
+             * Tokens of the user that expired for lack of use (idle-ttl, e.g. during an AutoSys outage) work
+             * again too; revoked tokens and those past absolute-ttl do not.
              */
             @DefaultValue("true") boolean keepOnRelogin) {
     }

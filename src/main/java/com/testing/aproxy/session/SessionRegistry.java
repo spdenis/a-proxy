@@ -76,7 +76,8 @@ public class SessionRegistry {
     /**
      * Creates a session for a freshly captured login and returns the raw token. Any previous
      * session of the same user is closed; its token keeps working for the new session when
-     * {@code autosys.token.keep-on-relogin} is on. The caller must wipe {@code password} afterwards.
+     * {@code autosys.token.keep-on-relogin} is on, as do the user's tokens that expired for lack of use.
+     * The caller must wipe {@code password} afterwards.
      */
     public IssuedSession create(String username, char[] password, @Nullable String clientIp) {
         return create(username, password, clientIp, null, List.of());
@@ -84,6 +85,7 @@ public class SessionRegistry {
 
     public IssuedSession create(String username, char[] password, @Nullable String clientIp,
             @Nullable LoginTemplate loginTemplate, List<String> autosysCookies) {
+        sessions.cleanUp(); // a session of the user that has just expired ends as such, not as replaced
         Instant now = clock.instant();
         String token = tokens.newToken();
         String tokenHash = TokenService.hash(token);
@@ -106,7 +108,25 @@ public class SessionRegistry {
             }
             sessions.invalidate(previous);
         }
+        if (keepOnRelogin) {
+            adoptIdleTokens(username, tokenHash);
+        }
         return new IssuedSession(token, browserKey, session);
+    }
+
+    /*
+     * Earlier tokens of the user whose session ended only for lack of use (e.g. nothing could reach AutoSys
+     * during an outage) work again with the new login. Revoked tokens and those past the absolute TTL do not.
+     */
+    private void adoptIdleTokens(String username, String tokenHash) {
+        closed.asMap().entrySet().removeIf(entry -> {
+            Closed why = entry.getValue();
+            if (why.reason() == Reason.IDLE && why.username().equals(username)) {
+                aliases.put(entry.getKey(), tokenHash);
+                return true;
+            }
+            return false;
+        });
     }
 
     /** Resolves a raw bearer token to its session and refreshes the idle timer. */
@@ -162,7 +182,7 @@ public class SessionRegistry {
         String at = TIME.withZone(clock.getZone()).format(why.at());
         return switch (why.reason()) {
             case IDLE -> "The API token expired at " + at + " after " + idleTtl + " without use. Log in to AutoSys "
-                    + "through the proxy again for a new token";
+                    + "through the proxy again" + (keepOnRelogin ? ": this token then works again" : " for a new token");
             case ABSOLUTE -> "The API token expired at " + at + ": tokens last at most " + absoluteTtl
                     + " after the login. Log in to AutoSys through the proxy again for a new token";
             case REPLACED -> "The API token was replaced at " + at + " by a newer login of '" + why.username()
